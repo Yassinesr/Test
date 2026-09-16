@@ -1,0 +1,16 @@
+# A7 (treatment arm) -- POT-TC on PraNet.  Tests that the effect is not
+# specific to the PVT backbone.  If A1 helps on Polyp-PVT and not here, the
+# claim is "POT-TC helps this architecture", which is much weaker.
+_base: a7_pranet_a0.yaml
+
+pot:
+  tail:
+    mode: gpd
+    p: 0.15
+    alpha: 0.02
+    lam: 0.3
+    warmup_frac: 0.2
+
+run:
+  name: a7_pranet_a1
+  notes: "A7 treatment: PraNet + POT-TC."

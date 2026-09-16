@@ -1,0 +1,18 @@
+# A0 -- reproduced Polyp-PVT baseline.  Everything downstream is measured
+# against this, on the same seeds, not against a published number.
+#
+# Acceptance check (§2.1 of the brief): the reported `dice_sweep` should land
+# within +/-0.5 mDice of Polyp-PVT's own table (Kvasir .917, ClinicDB .937,
+# ColonDB .808, CVC-300 .900, ETIS .787) AND of the independent
+# re-evaluation (ColonDB .811, CVC-300 .904, ETIS .790).  Compare against
+# `dice_sweep`, not `dice`: the published numbers are threshold-averaged.
+# Outside that band, you are measuring the harness, not the method.
+_base: base.yaml
+
+pot:
+  tail:
+    mode: none
+
+run:
+  name: a0_baseline
+  notes: "A0: reproduced Polyp-PVT baseline, no tail term."

@@ -1,0 +1,29 @@
+# A1 -- POT-TC.  The candidate.
+#
+# Identical to A0 in every respect except the added tail term: same model,
+# same parameter count, same schedule, same inference path.  The equal-
+# parameter control is therefore exact, and the equal-FLOP control is A5.
+_base: base.yaml
+
+pot:
+  tail:
+    mode: gpd
+    p: 0.15
+    alpha: 0.02
+    lam: 0.3
+    warmup_frac: 0.2
+    buffer_size: 512
+    min_buffer: 128
+    min_exceedances: 8
+    ema_momentum: 0.05
+    xi_mode: live
+    xi_min: -1.5
+    xi_max: 0.7
+    weight_floor: 0.0
+    normalize: sum1
+    rescale_live: true
+    exceedance_cap: null
+
+run:
+  name: a1_pottc
+  notes: "A1: POT-TC, GPD return-level tail weighting."

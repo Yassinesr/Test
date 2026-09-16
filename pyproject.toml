@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polyptail"
+version = "0.1.0"
+description = "POT-TC: extreme-value tail calibration for polyp segmentation, with the protocol infrastructure to test it honestly"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "torch>=1.12",
+    "numpy>=1.21",
+    "scipy>=1.7",
+    "pillow>=9.0",
+    "pyyaml>=5.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["polyptail*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::FutureWarning"]

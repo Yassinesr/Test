@@ -1,0 +1,18 @@
+# A6 -- label-noise robustness.  Caps each image's exceedance, bounding what
+# any single (possibly mis-annotated) frame can contribute to the fit and the
+# gradient.
+#
+# The card lists label-noise amplification as failure mode #1: the worst-loss
+# images may simply be wrong. Read this together with per_image_deficits.csv,
+# which names the training images that populated the tail -- if the same
+# handful of stems dominate every epoch, inspect them before believing
+# anything else in the table.
+_base: a1_pottc.yaml
+
+pot:
+  tail:
+    exceedance_cap: 0.3
+
+run:
+  name: a6_capped
+  notes: "A6: A1 with the per-image exceedance capped at 0.3."
