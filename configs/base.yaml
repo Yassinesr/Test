@@ -1,0 +1,80 @@
+# Base configuration: the released Polyp-PVT recipe, on the frozen manifest.
+#
+# Recipe provenance (all from the Polyp-PVT paper and its released Train.py):
+#   352x352, batch 16, AdamW lr 1e-4 wd 1e-4, 100 epochs,
+#   multi-scale {0.75, 1, 1.25}, no augmentation, gradient value-clip 0.5.
+#
+# Two deviations from the released code, both deliberate and both documented
+# in docs/PROTOCOL.md:
+#   * epochs 100, not the 99 that `range(1, opt.epoch)` actually runs;
+#   * no checkpoint selection on the test sets (run.select: last).
+#
+# The learning rate is constant: the released Train.py calls
+# adjust_lr(..., 0.1, 200) with 100 epochs, so its advertised 50-epoch decay
+# never fires.  decay_epoch: 200 below reproduces that.
+
+data:
+  root: ./dataset
+  manifest: manifests/pranet_protocol.json
+  train_split: TrainDataset
+  test_splits:
+    - TestDataset/Kvasir
+    - TestDataset/CVC-ClinicDB
+    - TestDataset/CVC-ColonDB
+    - TestDataset/CVC-300
+    - TestDataset/ETIS-LaribPolypDB
+  size: 352
+  augment: none
+  mask_interpolation: bilinear
+  num_workers: 4
+  verify: hash
+  val_frac: 0.0
+  val_seed: 12345
+
+model:
+  name: polyp_pvt
+  channel: 32
+  variant: pvt_v2_b2
+  pretrained: null          # null -> ./pretrained_pth/pvt_v2_b2.pth
+  strict_pretrained: true
+
+optim:
+  optimizer: AdamW
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  epochs: 100
+  batch_size: 16
+  grad_accum: 1             # raise to 2 with batch_size 8 if 12 GB is tight
+  clip: 0.5
+  decay_rate: 0.1
+  decay_epoch: 200          # i.e. never, within 100 epochs -- as released
+  scales: [0.75, 1.0, 1.25]
+  amp: fp16                 # halves activation memory; needed for 12 GB
+  structure_variant: legacy # reproduces the released (unweighted) BCE term
+
+pot:
+  tail:
+    mode: none              # A0.  Candidate configs switch this on.
+  deficit_kind: soft_dice
+  head: null                # null -> the model registry's evaluation head
+  apply_scales: unit
+  log_per_image: true
+
+eval:
+  threshold: 0.5
+  hd95: true
+  sweep: true
+  num_workers: 2
+  batch_size: 1
+  save_masks: true
+  every: 0
+
+run:
+  name: base
+  seed: 0
+  out_dir: ./runs
+  deterministic: false
+  log_every: 20
+  save_every: 0
+  select: last
+  notes: ""

@@ -1,0 +1,18 @@
+# A2 -- the decisive ablation.  Replaces the GPD return level with the
+# EMPIRICAL (1-alpha) tail average over the same exceedance pool: same
+# threshold, same buffer, same schedule, same lambda.  Only the extrapolation
+# is removed.
+#
+# If A1 - A2 has a confidence interval containing zero on every external
+# dataset, the extreme-value content is doing nothing and POT-TC is a
+# re-parameterisation of a known method.  That is rejection condition C2.
+_base: a1_pottc.yaml
+
+pot:
+  tail:
+    mode: cvar
+    cvar_selection: pool
+
+run:
+  name: a2_cvar
+  notes: "A2: empirical tail average (CVaR at alpha) instead of the GPD quantile."

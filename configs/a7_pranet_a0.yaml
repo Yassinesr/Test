@@ -1,0 +1,19 @@
+# A7 (control arm) -- PraNet baseline, the secondary low-capacity control.
+_base: base.yaml
+
+model:
+  name: pranet
+  pretrained: null          # null -> ./pretrained_pth/res2net50_v1b_26w_4s-3cf99910.pth
+
+optim:
+  epochs: 20                # PraNet's own recipe is 20 epochs, lr 1e-4, Adam
+  optimizer: Adam
+  decay_epoch: 200
+
+pot:
+  tail:
+    mode: none
+
+run:
+  name: a7_pranet_a0
+  notes: "A7 control: PraNet baseline (PraNet recipe: Adam, 20 epochs)."

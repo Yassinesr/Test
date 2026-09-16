@@ -1,0 +1,15 @@
+# A5 -- equal-compute control.  POT-TC adds no parameters and only a few
+# percent of wall-clock, so the honest control is the baseline given the same
+# wall-clock: extra epochs.
+#
+# Set optim.epochs from the measured ratio of A1 to A0 seconds-per-epoch
+# (both runs write wall_clock_seconds to results.json); 105 is a placeholder
+# for a ~5% overhead.  tools/run_ablation.py --auto-budget computes it.
+_base: a0_baseline.yaml
+
+optim:
+  epochs: 105
+
+run:
+  name: a5_equal_budget
+  notes: "A5: A0 with wall-clock matched to A1 by extra epochs."

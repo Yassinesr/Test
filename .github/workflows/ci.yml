@@ -1,0 +1,35 @@
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install (CPU torch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-dev.txt
+      - name: Unit tests
+        run: pytest -q
+      - name: End-to-end smoke run on synthetic data
+        run: |
+          python tools/make_smoke_data.py --out ./_smoke_data
+          python tools/verify_manifest.py --root ./_smoke_data --manifest ./_smoke_data/manifest.json
+          python tools/hash_collisions.py --root ./_smoke_data \
+            --manifest ./_smoke_data/manifest.json --out ./_smoke_data/collisions.json --quiet
+          python tools/train.py --config configs/smoke.yaml run.name=ci
+          python tools/evaluate.py --run _smoke_runs/ci --compare
