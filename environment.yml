@@ -43,8 +43,13 @@ dependencies:
       # cu11x wheel runs on a driver >= 450.80.02, and sm_86 (RTX 30-series)
       # has been natively compiled in since CUDA 11.1.
       #
-      # Conservative fallback if anything misbehaves:
-      #   --extra-index-url https://download.pytorch.org/whl/cu117
-      #   torch==1.13.1
+      # The `+cu117` local version is part of the pin on purpose: it exists
+      # only on the PyTorch index, so pip cannot quietly serve the PyPI build
+      # of the same version number instead. `--extra-index-url` (rather than
+      # `--index-url`) lets torch's own dependencies resolve from PyPI.
+      #
+      # Conservative fallback if anything misbehaves -- the most cautious
+      # combination that still supports an RTX 30-series card:
+      #   - torch==1.13.1+cu117
       - --extra-index-url https://download.pytorch.org/whl/cu117
-      - torch==2.0.1
+      - torch==2.0.1+cu117

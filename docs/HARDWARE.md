@@ -34,7 +34,7 @@ compiled against the NumPy 1.x C API and fails at import under NumPy 2 with
 NumPy 2 support arrived in torch 2.4, which wants a newer driver than CUDA
 11.4 offers. Keep the ceiling.
 
-If anything misbehaves, `torch==1.13.1` from the same index is the most
+If anything misbehaves, `torch==1.13.1+cu117` from the same index is the most
 conservative combination that still supports your card — edit the pip block
 in `environment.yml` and re-create the environment.
 

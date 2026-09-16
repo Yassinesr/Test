@@ -56,6 +56,21 @@ class TestEnvironmentFiles:
         assert any(p.startswith("torch") for p in pip)
         assert any("download.pytorch.org" in p for p in pip)
 
+    def test_the_gpu_pin_names_its_cuda_build_explicitly(self, name):
+        """`torch==2.0.1` alone is ambiguous under --extra-index-url: PyPI
+        carries that version number too, so pip could serve either wheel. The
+        `+cu117` local version exists only on the PyTorch index, which makes
+        the pin mean what the docs say it means."""
+        if name != "environment.yml":
+            pytest.skip("CPU environment intentionally tracks the current wheel")
+        _, pip = conda_deps(name)
+        torch_spec = next(p for p in pip if p.startswith("torch"))
+        index = next(p for p in pip if "download.pytorch.org" in p)
+        cuda_tag = index.rstrip("/").rsplit("/", 1)[-1]          # e.g. "cu117"
+        assert f"+{cuda_tag}" in torch_spec, (
+            f"{torch_spec!r} does not pin the {cuda_tag} build served by {index!r}"
+        )
+
     def test_caps_numpy_below_two(self, name):
         conda, _ = conda_deps(name)
         spec = spec_for(conda, "numpy")

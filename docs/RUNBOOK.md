@@ -40,8 +40,9 @@ confusing first-run failures if you change them:
 CUDA 11.4 means a ~470 driver. Minor-version compatibility applies inside
 11.x, so any `cu11x` wheel runs on a driver >= 450.80.02, and sm_86 (your
 3080 Ti) has been natively compiled in since CUDA 11.1. If anything looks odd,
-swap `torch==2.0.1` for `torch==1.13.1` in `environment.yml` -- same index
-URL, and the most conservative combination that still supports your card.
+swap `torch==2.0.1+cu117` for `torch==1.13.1+cu117` in `environment.yml` and
+re-create the environment. Same index; the most conservative combination that
+still supports your card.
 
 Prefer pip and a plain virtualenv? `requirements-dev.txt` plus
 `pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117`
