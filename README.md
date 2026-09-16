@@ -174,6 +174,9 @@ that matters on CUDA 11.4.
 
 ## Documentation
 
+* **[`docs/RUNBOOK.md`](docs/RUNBOOK.md)** — start here if you are about to
+  run this: a linear step-by-step from empty directory to verdict, with the
+  decision points and what to do when each step misbehaves.
 * **[`docs/PROTOCOL.md`](docs/PROTOCOL.md)** — the locked protocol, the
   dataset provenance warnings, and the §6.2 blocking-items scoreboard.
 * **[`docs/CANDIDATE1_POT_TC.md`](docs/CANDIDATE1_POT_TC.md)** — derivation,
