@@ -2,36 +2,95 @@
 
 ## 1. Install
 
+### Recommended: conda for the environment, pip for torch
+
+```bash
+conda env create -f environment.yml
+conda activate polyptail
+```
+
+`environment.yml` brings up Python 3.10 and the scientific stack from
+conda-forge, then installs `torch==2.0.1+cu117` from the official PyTorch
+wheel index. The split is deliberate:
+
+* **PyTorch deprecated its own Anaconda channel.** `conda install pytorch`
+  now resolves against a frozen archive that receives no updates and may
+  eventually be withdrawn. The pip wheels at `download.pytorch.org` are the
+  supported distribution path.
+* **The pip wheels bundle their own CUDA runtime.** That means the cu117
+  build runs against your CUDA 11.4 driver with no `cudatoolkit` package to
+  reconcile, and no chance of conda solving to a CUDA build your driver
+  cannot load.
+
 CUDA 11.4 means a ~470 driver. CUDA **minor version compatibility** applies
-inside the 11.x series: any `cu11x` PyTorch build runs on a driver ≥ 450.80.02,
-and sm_86 (Ampere, which the 3080 Ti is) has been natively compiled into every
-CUDA build since 11.1. So you are not restricted to `cu113`.
+inside the 11.x series: any `cu11x` PyTorch build runs on a driver
+>= 450.80.02, and sm_86 (Ampere, which the 3080 Ti is) has been natively
+compiled into every CUDA build since 11.1. So you are not restricted to
+`cu113`.
+
+**NumPy is capped below 2.0**, and this one bites people. torch 2.0.1 was
+compiled against the NumPy 1.x C API and fails at import under NumPy 2 with
+*"A module that was compiled using NumPy 1.x cannot be run in NumPy 2"*.
+NumPy 2 support arrived in torch 2.4, which wants a newer driver than CUDA
+11.4 offers. Keep the ceiling.
+
+If anything misbehaves, `torch==1.13.1` from the same index is the most
+conservative combination that still supports your card — edit the pip block
+in `environment.yml` and re-create the environment.
+
+### CPU-only environment
+
+For the unit tests, the synthetic smoke run, or `tools/analyze.py` on results
+produced elsewhere:
+
+```bash
+conda env create -f environment-cpu.yml
+conda activate polyptail-cpu
+```
+
+### Pure-conda alternative
+
+If you would rather conda managed CUDA as well, this still resolves today,
+from the frozen `pytorch` channel:
+
+```bash
+conda create -n polyptail python=3.10
+conda activate polyptail
+conda install pytorch==2.0.1 pytorch-cuda=11.7 -c pytorch -c nvidia
+conda install -c conda-forge "numpy<2" scipy pillow pyyaml pytest
+```
+
+It works, but you are depending on a channel that is no longer maintained.
+Prefer `environment.yml` unless you have a specific reason not to.
+
+### pip and virtualenv
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-
-# Recommended: torch 2.0.1 + cu117. Newer kernels, same driver requirement.
 pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117
-
-# Conservative alternative if anything looks odd:
-# pip install torch==1.13.1 --index-url https://download.pytorch.org/whl/cu117
-
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
-There is **no torchvision and no timm dependency**. Images are decoded and
-transformed through Pillow, and the PVTv2 backbone vendors the three timm
-helpers it needs (`to_2tuple`, `trunc_normal_`, `DropPath`). That is deliberate:
-in the torch 1.12–2.0 range that CUDA 11.4 pins you to, timm and torchvision
-compatibility tables are a recurring source of silent breakage, and `timm`
-moved `timm.models.layers` to `timm.layers` in a way that breaks the official
-Polyp-PVT source outright.
+`requirements.txt` carries the same `numpy<2` ceiling.
 
-Confirm the GPU is actually visible before anything else:
+### No torchvision, no timm
+
+Images are decoded and transformed through Pillow, and the PVTv2 backbone
+vendors the three timm helpers it needs (`to_2tuple`, `trunc_normal_`,
+`DropPath`). That is deliberate: in the torch 1.12-2.0 range that CUDA 11.4
+pins you to, timm and torchvision compatibility tables are a recurring source
+of silent breakage, and `timm` moved `timm.models.layers` to `timm.layers` in
+a way that breaks the official Polyp-PVT source outright.
+
+### Check before anything else
 
 ```bash
 python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
+
+Expect `2.0.1+cu117 True NVIDIA GeForce RTX 3080 Ti`. If `torch.cuda.is_available()`
+is `False`, stop: the usual causes are a driver older than 450.80.02, or a CPU
+wheel installed by omitting the index URL.
 
 The code handles both torch generations transparently: `weights_only` in
 `torch.load` (added in 1.13) and the `GradScaler` spelling change (2.4) are

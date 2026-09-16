@@ -30,9 +30,8 @@ fixed.
 ## Quick start
 
 ```bash
-pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117   # see docs/HARDWARE.md
-pip install -r requirements-dev.txt
-pytest -q                                            # 201 tests, ~25 s, CPU only
+conda env create -f environment.yml && conda activate polyptail   # see docs/HARDWARE.md
+pytest -q                                            # 213 tests, ~25 s, CPU only
 
 # End-to-end on synthetic data, no GPU and no downloads, ~30 s:
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -163,8 +162,11 @@ polyptail/
 tools/                 freeze_manifest, verify_manifest, hash_collisions, check_memory,
                        train, evaluate, run_ablation, analyze, make_smoke_data
 configs/               base + A0/A1/A2/A3/A5/A6/A7 + sweeps + a CPU smoke config
-tests/                 201 tests, CPU only
-docs/                  PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE, REPRODUCIBILITY
+tests/                 213 tests, CPU only
+docs/                  RUNBOOK, PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE,
+                       REPRODUCIBILITY
+environment.yml        conda env (GPU): conda-forge stack + torch 2.0.1+cu117 via pip
+environment-cpu.yml    conda env (CPU): tests, smoke run, analysis
 ```
 
 No torchvision, no timm, no albumentations — see `docs/HARDWARE.md` for why

@@ -16,22 +16,36 @@ uninterpretable.
 git clone <your fork or this repo> polyptail && cd polyptail
 git checkout claude/cool-rubin-kd7m6s
 
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-python -m pip install --upgrade pip
+conda env create -f environment.yml
+conda activate polyptail
 ```
 
-Install torch **first**, for your CUDA, then everything else:
+That is the whole install: `environment.yml` brings up Python 3.10 and the
+scientific stack from conda-forge, then pulls `torch==2.0.1+cu117` from the
+official PyTorch wheel index via pip.
 
-```bash
-pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117
-pip install -r requirements-dev.txt
-```
+Two things in that file are deliberate and worth knowing, because both cause
+confusing first-run failures if you change them:
+
+* **PyTorch comes from pip, not from conda.** PyTorch deprecated its own
+  Anaconda channel, so `conda install pytorch` pulls from a frozen archive.
+  The pip wheels also bundle their own CUDA runtime, so the cu117 build runs
+  against your CUDA 11.4 driver without conda having to reconcile a
+  `cudatoolkit` against it. (A pure-conda alternative is in
+  `docs/HARDWARE.md` if you prefer it.)
+* **NumPy is capped below 2.0.** torch 2.0.1 was compiled against the NumPy
+  1.x C API and fails at import under NumPy 2. That ceiling lifts if you move
+  to torch >= 2.4, which needs a newer driver than CUDA 11.4 gives you.
 
 CUDA 11.4 means a ~470 driver. Minor-version compatibility applies inside
 11.x, so any `cu11x` wheel runs on a driver >= 450.80.02, and sm_86 (your
 3080 Ti) has been natively compiled in since CUDA 11.1. If anything looks odd,
-`torch==1.13.1` with the same index URL is the conservative fallback.
+swap `torch==2.0.1` for `torch==1.13.1` in `environment.yml` -- same index
+URL, and the most conservative combination that still supports your card.
+
+Prefer pip and a plain virtualenv? `requirements-dev.txt` plus
+`pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117`
+gives the same environment.
 
 **Check:**
 
@@ -51,7 +65,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `202 passed` in about 25 seconds. These are CPU-only and need no data.
+Expect `213 passed` in about 25 seconds. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data

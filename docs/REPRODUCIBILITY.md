@@ -26,11 +26,16 @@ makes them usable as a target at all.
 
 ```bash
 git clone <this repo> && cd Test
-python -m venv .venv && source .venv/bin/activate
-pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117   # see docs/HARDWARE.md
-pip install -r requirements-dev.txt
-pytest -q          # 201 tests, ~25 s on CPU
+conda env create -f environment.yml    # or environment-cpu.yml with no GPU
+conda activate polyptail
+pytest -q                              # 213 tests, ~25 s on CPU
 ```
+
+`environment.yml` pins `torch==2.0.1+cu117` and caps NumPy below 2.0 (torch
+2.0.1 predates NumPy 2 C-API support). Pinning the environment is part of the
+reproduction, not housekeeping: every run records its resolved torch, NumPy,
+CUDA and cuDNN versions in `environment.json`, and a torch-version change is
+enough to move the last decimals.
 
 Datasets go under `./dataset/` in the PraNet layout:
 

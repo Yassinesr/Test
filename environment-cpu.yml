@@ -1,0 +1,28 @@
+# CPU-only conda environment: unit tests, the synthetic smoke run, and
+# tools/analyze.py on results produced elsewhere. No GPU required.
+#
+#   conda env create -f environment-cpu.yml
+#   conda activate polyptail-cpu
+#   pytest -q
+#
+# The NumPy ceiling from environment.yml is not needed here, because the CPU
+# wheel is current and supports NumPy 2 -- but it is kept so that a result
+# produced in this environment is byte-comparable with one produced in the GPU
+# environment.
+
+name: polyptail-cpu
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.10
+  - pip
+  - numpy>=1.21,<2
+  - scipy>=1.7
+  - pillow>=9.0
+  - pyyaml>=5.4
+  - pytest>=7.0
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cpu
+      - torch
