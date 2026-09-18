@@ -66,7 +66,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `213 passed` in about 25 seconds. These are CPU-only and need no data.
+Expect `232 passed` in about 25 seconds. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -83,27 +83,56 @@ there are 2248 real images and a GPU in the picture.
 
 ---
 
-## Step 3 — Download the data and the pretrained backbone
+## Step 3 — Lay out the data and the pretrained backbone
 
-Both come from the official Polyp-PVT release
-(<https://github.com/DengPingFan/Polyp-PVT>):
-
-* **Datasets** — the "Data preparation" link,
-  Google Drive file `1pFxb9NbM8mj_rlSawTlcXG1OdVGAbRQC`
-  (Baidu mirror code `sydz`). Unpack into `./dataset/`.
-* **Pretrained PVTv2-B2** — the "Pretrained model" link,
-  Google Drive folder `1Eu8v9vMRvt-dyCH0XSV2i77lAd62nPXV`
-  (Baidu code `w4vk`). Put `pvt_v2_b2.pth` in `./pretrained_pth/`.
-
-Only if you intend to run A7 (the PraNet control), also:
+Everything here runs inside the conda environment, which is where `gdown`
+lives. With the environment active:
 
 ```bash
-mkdir -p pretrained_pth
-curl -L -o pretrained_pth/res2net50_v1b_26w_4s-3cf99910.pth \
-  https://shanghuagao.oss-cn-beijing.aliyuncs.com/res2net/res2net50_v1b_26w_4s-3cf99910.pth
+python tools/prepare_data.py --download --pretrained
 ```
 
-The layout must end up exactly like this:
+That fetches the dataset archive and the backbone weights, unpacks them into
+`./dataset/` and `./pretrained_pth/`, flattens the redundant top-level
+directory the archive sometimes carries, and then validates the result.
+
+**Treat the download as best-effort.** Google Drive rate-limits large public
+files and changes its confirmation flow periodically. If `gdown` fails, the
+tool prints the links; fetch them by hand and re-run the check. Nothing
+downstream cares how the bytes arrived.
+
+* **Datasets** — Polyp-PVT README §4.2,
+  Google Drive file `1pFxb9NbM8mj_rlSawTlcXG1OdVGAbRQC`
+  (Baidu mirror code `sydz`). Unpack into `./dataset/`.
+* **PVTv2-B2** — Polyp-PVT README §4.3,
+  Google Drive folder `1Eu8v9vMRvt-dyCH0XSV2i77lAd62nPXV`
+  (Baidu code `w4vk`) → `./pretrained_pth/pvt_v2_b2.pth`.
+* **Res2Net-50-v1b** — only for the A7 control; `prepare_data.py` pulls it
+  over plain HTTPS, so it rarely needs a manual step.
+
+### Check the layout
+
+```bash
+python tools/prepare_data.py --check
+```
+
+This is the part that matters, and it runs without network. It compares what
+you have against what the reference implementation *hard-codes* — the five
+test-split spellings, the `images/` and `masks/` subdirectories, the file
+extensions each reference dataloader accepts — and reports the actual problem
+rather than failing several steps later:
+
+```
+split                               pairs  expected  status
+TrainDataset                         1450      1450  ok
+TestDataset/Kvasir                    100       100  ok
+TestDataset/CVC-ClinicDB               62        62  ok
+TestDataset/CVC-ColonDB               380       380  ok
+TestDataset/CVC-300                    60        60  ok
+TestDataset/ETIS-LaribPolypDB         196       196  ok
+```
+
+The target layout:
 
 ```
 dataset/
@@ -117,18 +146,26 @@ pretrained_pth/
   pvt_v2_b2.pth
 ```
 
-**Check:**
+Things the checker will tell you about, in the order they actually happen:
 
-```bash
-for d in dataset/TrainDataset dataset/TestDataset/*; do
-  echo "$(ls "$d/images" | wc -l)  $d"
-done
-```
+| it says | what happened |
+|---|---|
+| *unzipped one level too deep* | the archive expanded to `dataset/dataset/TrainDataset/...`; move the inner contents up |
+| *`CVC-T/` looks like it: rename to `CVC-300`* | the 60-image split travels under three names in the literature; the reference code hard-codes one |
+| *N image(s) have no mask with a matching name* | incomplete unpack; re-download rather than deleting the orphans |
+| *pairs differ in size* | the archive did not unpack cleanly |
+| *extension the reference dataloader filters out* | your copy works here but the original repo would silently skip those files, so the two are not comparable |
+| *`TestDataset/test/` is absent* | **expected, and not a problem.** See below |
 
-Expect `1450, 100, 62, 380, 60, 196` (order depends on your shell's glob).
-Directory names must match exactly — `CVC-300`, not `CVC-T` or `EndoScene`.
+### One quirk worth knowing
 
----
+The released `Train.py` line 116 calls `test(model, test_path, 'test')`, i.e.
+it requires `./dataset/TestDataset/test/` — a directory the distributed
+archive does not contain. The original training script therefore cannot finish
+its first epoch on the released data until you create that directory yourself,
+and whatever you put in it silently becomes its checkpoint-selection
+criterion. Nothing in this project needs it, which is why the checker reports
+its absence as a note rather than an error.
 
 ## Step 4 — Freeze the data (this is the protocol)
 

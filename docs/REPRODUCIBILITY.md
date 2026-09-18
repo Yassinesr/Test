@@ -28,7 +28,7 @@ makes them usable as a target at all.
 git clone <this repo> && cd Test
 conda env create -f environment.yml    # or environment-cpu.yml with no GPU
 conda activate polyptail
-pytest -q                              # 213 tests, ~25 s on CPU
+pytest -q                              # 232 tests, ~25 s on CPU
 ```
 
 `environment.yml` pins `torch==2.0.1+cu117` and caps NumPy below 2.0 (torch
@@ -37,16 +37,18 @@ reproduction, not housekeeping: every run records its resolved torch, NumPy,
 CUDA and cuDNN versions in `environment.json`, and a torch-version change is
 enough to move the last decimals.
 
-Datasets go under `./dataset/` in the PraNet layout:
+Data and backbones, from inside the environment:
 
-```
-dataset/
-  TrainDataset/{images,masks}/
-  TestDataset/{Kvasir,CVC-ClinicDB,CVC-ColonDB,CVC-300,ETIS-LaribPolypDB}/{images,masks}/
+```bash
+python tools/prepare_data.py --download --pretrained
+python tools/prepare_data.py --check
 ```
 
-Both are linked from the Polyp-PVT README. Pretrained backbones go under
-`./pretrained_pth/` — see `docs/HARDWARE.md`.
+`--check` validates `./dataset/` against what the reference implementation
+hard-codes and names the actual problem — a renamed split, an archive unzipped
+one level too deep, an unpaired mask, an extension the reference silently
+skips. Run it until it is clean; everything after this assumes it is. See
+`docs/RUNBOOK.md` step 3 for the layout diagram.
 
 ## 2. Freeze and audit the data — before any training
 

@@ -40,6 +40,9 @@ jobs:
       - name: End-to-end smoke run on synthetic data
         run: |
           python tools/make_smoke_data.py --out ./_smoke_data
+          # The layout checker must reject a tree that is not the PraNet
+          # distribution; the smoke data deliberately is not one.
+          python tools/prepare_data.py --root ./_smoke_data --check && exit 1 || true
           python tools/verify_manifest.py --root ./_smoke_data --manifest ./_smoke_data/manifest.json
           python tools/hash_collisions.py --root ./_smoke_data \
             --manifest ./_smoke_data/manifest.json --out ./_smoke_data/collisions.json --quiet

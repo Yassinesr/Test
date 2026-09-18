@@ -31,17 +31,21 @@ fixed.
 
 ```bash
 conda env create -f environment.yml && conda activate polyptail   # see docs/HARDWARE.md
-pytest -q                                            # 213 tests, ~25 s, CPU only
+pytest -q                                            # 232 tests, ~25 s, CPU only
 
 # End-to-end on synthetic data, no GPU and no downloads, ~30 s:
 python tools/make_smoke_data.py --out ./_smoke_data
 python tools/train.py --config configs/smoke.yaml
 ```
 
-With the real datasets in `./dataset/` (PraNet layout) and backbones in
-`./pretrained_pth/`:
+Then, with the environment active:
 
 ```bash
+# 0. Fetch ./dataset and ./pretrained_pth, and validate the layout against
+#    what the reference implementation hard-codes.
+python tools/prepare_data.py --download --pretrained
+python tools/prepare_data.py --check
+
 # 1. Freeze the data and publish the duplicate audit.  Do this first.
 python tools/freeze_manifest.py  --root ./dataset --out manifests/pranet_protocol.json
 python tools/hash_collisions.py  --root ./dataset --manifest manifests/pranet_protocol.json \
@@ -159,10 +163,11 @@ polyptail/
   eval/                the one evaluation implementation
   stats/               paired intervals and the falsification verdict
   engine/              the training loop
-tools/                 freeze_manifest, verify_manifest, hash_collisions, check_memory,
-                       train, evaluate, run_ablation, analyze, make_smoke_data
+tools/                 prepare_data, freeze_manifest, verify_manifest, hash_collisions,
+                       check_memory, train, evaluate, run_ablation, analyze,
+                       make_smoke_data
 configs/               base + A0/A1/A2/A3/A5/A6/A7 + sweeps + a CPU smoke config
-tests/                 213 tests, CPU only
+tests/                 232 tests, CPU only
 docs/                  RUNBOOK, PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE,
                        REPRODUCIBILITY
 environment.yml        conda env (GPU): conda-forge stack + torch 2.0.1+cu117 via pip

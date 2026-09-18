@@ -134,6 +134,16 @@ affect whether a "reproduction" lands within ±0.5 mDice:
    every epoch and checkpoints on the best test mDice. That is selection on
    the test set. It is not implementable here: `run.select` accepts `last`, or
    `val_dice` against a fold held out of the **training** split.
+5. **The selection set does not exist.** That same checkpointing call is
+   `test(model, test_path, 'test')` — i.e. `./dataset/TestDataset/test/`, a
+   directory the distributed archive does not contain. The released training
+   script cannot finish its first epoch on the released data: every user has
+   to invent that directory, and whatever they put in it silently becomes the
+   selection criterion. So "the Polyp-PVT training recipe" is not merely
+   test-set-selecting, it is *under-specified about which test set*, and two
+   good-faith reproductions can differ on it without either noticing.
+   `tools/prepare_data.py --check` reports the directory's absence as a note,
+   because here its absence is correct.
 
 Augmentation: the released default is **none** (`opt.augmentation` defaults to
 the boolean `False` and is compared against the string `'True'`, so the

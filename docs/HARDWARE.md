@@ -96,21 +96,32 @@ The code handles both torch generations transparently: `weights_only` in
 `torch.load` (added in 1.13) and the `GradScaler` spelling change (2.4) are
 both version-guarded in `polyptail/utils/io.py`.
 
-## 2. Pretrained weights
+## 2. Data and pretrained weights
+
+With the environment active (it carries `gdown`):
 
 ```bash
-mkdir -p pretrained_pth
-# PVTv2-B2 for Polyp-PVT: from the Polyp-PVT release
-#   https://github.com/DengPingFan/Polyp-PVT  -> pretrained_pth/pvt_v2_b2.pth
-# Res2Net-50-v1b for the PraNet control (A7 only):
-#   https://shanghuagao.oss-cn-beijing.aliyuncs.com/res2net/res2net50_v1b_26w_4s-3cf99910.pth
+python tools/prepare_data.py --download --pretrained   # fetch, unpack, validate
+python tools/prepare_data.py --check                   # validate only, no network
 ```
 
-Both loaders are **strict**: a checkpoint that does not line up raises instead
-of loading nothing. The reference implementation filters mismatched keys
-silently, so pointing it at the wrong file trains from scratch and never says
-so — which produces a "reproduction gap" that has nothing to do with the
-method.
+Sources, if you would rather fetch by hand — all from the Polyp-PVT README:
+
+* datasets: Google Drive file `1pFxb9NbM8mj_rlSawTlcXG1OdVGAbRQC` (Baidu code
+  `sydz`) → unpack into `./dataset/`
+* PVTv2-B2: Google Drive folder `1Eu8v9vMRvt-dyCH0XSV2i77lAd62nPXV` (Baidu
+  code `w4vk`) → `./pretrained_pth/pvt_v2_b2.pth`
+* Res2Net-50-v1b (A7 control only):
+  <https://shanghuagao.oss-cn-beijing.aliyuncs.com/res2net/res2net50_v1b_26w_4s-3cf99910.pth>
+
+Then re-run `--check`. See `docs/RUNBOOK.md` step 3 for the layout diagram and
+what each diagnostic means.
+
+Both checkpoint loaders are **strict**: a checkpoint that does not line up
+raises instead of loading nothing. The reference implementation filters
+mismatched keys silently, so pointing it at the wrong file trains from scratch
+and never says so — which produces a "reproduction gap" that has nothing to do
+with the method.
 
 ## 3. Will batch 16 fit in 12 GB?
 

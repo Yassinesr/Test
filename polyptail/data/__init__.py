@@ -7,6 +7,7 @@ from .dataset import (
     items_for_split,
     worker_init_fn,
 )
+from .layout import EXPECTED_COUNTS, LayoutReport, check_layout
 from .manifest import (
     SCHEMA,
     ManifestItem,
@@ -20,7 +21,7 @@ from .manifest import (
 )
 
 __all__ = [
-    "binarize_mask", "build_manifest", "build_split", "collate_eval",
+    "binarize_mask", "check_layout", "EXPECTED_COUNTS", "LayoutReport", "build_manifest", "build_split", "collate_eval",
     "IMAGENET_MEAN", "IMAGENET_STD", "items_for_split", "load_manifest",
     "ManifestItem", "PolypTestDataset", "PolypTrainDataset", "SCHEMA",
     "sha256_file", "verify_manifest", "worker_init_fn", "write_manifest",
