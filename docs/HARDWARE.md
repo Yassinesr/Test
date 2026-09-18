@@ -98,11 +98,24 @@ both version-guarded in `polyptail/utils/io.py`.
 
 ## 2. Data and pretrained weights
 
-With the environment active (it carries `gdown`):
+**If the data is already on this machine, do not download it again.** A
+Polyp-PVT checkout next door already has `dataset/TrainDataset` and
+`dataset/TestDataset`:
+
+```bash
+python tools/prepare_data.py --link ../Polyp-PVT/dataset   # symlink, nothing copied
+python tools/prepare_data.py --check                       # validate, no network
+```
+
+`--link` validates the target before creating the symlink. Alternatively leave
+the data where it is and pass `--root <path>` to the tools and
+`data.root=<path>` to the training commands. Manifests store paths relative to
+the root, so the same frozen manifest verifies against either location.
+
+Only if you have no copy, with the environment active (it carries `gdown`):
 
 ```bash
 python tools/prepare_data.py --download --pretrained   # fetch, unpack, validate
-python tools/prepare_data.py --check                   # validate only, no network
 ```
 
 Sources, if you would rather fetch by hand — all from the Polyp-PVT README:

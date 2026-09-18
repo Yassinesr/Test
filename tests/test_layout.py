@@ -3,7 +3,7 @@
 import pytest
 from PIL import Image
 
-from polyptail.data.layout import EXPECTED_COUNTS, check_layout
+from polyptail.data.layout import EXPECTED_COUNTS, check_layout, link_dataset
 
 
 def build(root, splits, ext_image=".png", ext_mask=".png", size=(32, 24), n_override=None):
@@ -173,3 +173,82 @@ class TestSummary:
         # counts are deliberately small here, so warnings exist but no errors
         assert rep.ok
         assert "freeze_manifest" in rep.summary() or rep.warnings
+
+
+class TestLinkExistingDataset:
+    """The common case: the data is already on the machine, next to another
+    checkout. Nothing should be downloaded or copied."""
+
+    def _valid_tree(self, tmp_path):
+        src = tmp_path / "Polyp-PVT" / "dataset"
+        build(src, ALL)
+        (tmp_path / "Test").mkdir(parents=True, exist_ok=True)
+        return src, tmp_path / "Test" / "dataset"
+
+    def test_links_a_valid_tree_without_copying(self, tmp_path):
+        src, dest = self._valid_tree(tmp_path)
+        assert link_dataset(src, dest) == 0
+        assert dest.is_symlink()
+        assert dest.resolve() == src.resolve()
+
+    def test_is_idempotent(self, tmp_path):
+        src, dest = self._valid_tree(tmp_path)
+        assert link_dataset(src, dest) == 0
+        assert link_dataset(src, dest) == 0
+
+    def test_refuses_to_link_a_broken_tree(self, tmp_path):
+        """Fail here, where the message is about the dataset, rather than at
+        freeze time where it is about a hash."""
+        src, dest = self._valid_tree(tmp_path)
+        (src / "TrainDataset" / "masks" / "001.png").unlink()
+        assert link_dataset(src, dest) == 1
+        assert not dest.exists()
+
+    def test_refuses_a_missing_source(self, tmp_path):
+        _, dest = self._valid_tree(tmp_path)
+        assert link_dataset(tmp_path / "nope", dest) == 1
+        assert not dest.exists()
+
+    def test_refuses_to_clobber_a_real_directory(self, tmp_path):
+        src, dest = self._valid_tree(tmp_path)
+        dest.mkdir()
+        assert link_dataset(src, dest) == 1
+        assert not dest.is_symlink()
+
+    def test_refuses_to_silently_repoint_an_existing_link(self, tmp_path):
+        src, dest = self._valid_tree(tmp_path)
+        other = tmp_path / "other"
+        build(other, ALL)
+        assert link_dataset(src, dest) == 0
+        assert link_dataset(other, dest) == 1
+        assert dest.resolve() == src.resolve()
+
+    def test_a_manifest_frozen_through_the_link_verifies_at_the_real_path(self, tmp_path):
+        """Manifest paths are root-relative, so sharing one dataset between two
+        checkouts -- or moving it -- does not invalidate a frozen protocol."""
+        from polyptail.data.manifest import build_manifest, verify_manifest
+
+        src, dest = self._valid_tree(tmp_path)
+        assert link_dataset(src, dest) == 0
+        manifest = build_manifest(dest, ALL)
+        assert manifest["splits"]["TrainDataset"]["items"][0]["image"].startswith("TrainDataset/")
+        assert verify_manifest(dest, manifest).ok
+        assert verify_manifest(src, manifest).ok
+
+
+class TestExistingTestDirectory:
+    """A Polyp-PVT checkout often has a hand-made TestDataset/test/ so the
+    original Train.py can run. It must be recognised, and must not be read."""
+
+    def test_present_is_recognised_not_flagged(self, tmp_path):
+        root = build(tmp_path / "dataset", ALL)
+        build(root, ["TestDataset/test"])
+        rep = check_layout(root)
+        assert rep.ok, rep.summary()
+        assert not any("unrecognised" in w for w in rep.warnings)
+        assert any("TestDataset/test/ exists" in n for n in rep.notes)
+
+    def test_present_is_not_scored(self, tmp_path):
+        from polyptail.eval.evaluator import DEFAULT_TEST_SPLITS
+        assert "TestDataset/test" not in DEFAULT_TEST_SPLITS
+        assert "TestDataset/test" not in EXPECTED_COUNTS

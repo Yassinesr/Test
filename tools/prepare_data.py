@@ -1,23 +1,41 @@
 #!/usr/bin/env python3
-"""Lay out ./dataset and ./pretrained_pth, and check they are right.
+"""Point at a dataset you already have, or fetch one, then check the layout.
 
-Run inside the conda environment (``conda activate polyptail``), which is
-where ``gdown`` lives:
+**If the data is already on this machine -- e.g. a Polyp-PVT checkout next
+door -- do not download anything.** Either check it in place:
 
-    python tools/prepare_data.py --check                 # validate, no network
-    python tools/prepare_data.py --download              # fetch + unpack, then validate
-    python tools/prepare_data.py --download --pretrained # also fetch the backbones
+    python tools/prepare_data.py --check --root ../Polyp-PVT/dataset
+
+or link it so the default config works untouched:
+
+    python tools/prepare_data.py --link ../Polyp-PVT/dataset
+
+``--link`` validates the target *before* creating the symlink, so a wrong
+path fails here rather than at freeze time. Nothing is copied; both
+repositories go on reading the same bytes.
+
+A third option, if you would rather not have a ``./dataset`` at all, is to
+override the root per run -- ``data.root=/abs/path/to/dataset`` -- on every
+command. It is recorded in each run's ``config.yaml``, so provenance survives.
+
+Manifests store paths **relative to the root**, so a manifest frozen against
+one location verifies unchanged against any other. Moving the data, or
+sharing it between two checkouts, does not invalidate a frozen protocol.
+
+Only if you have no copy:
+
+    python tools/prepare_data.py --download --pretrained
+
+``--download`` is a best-effort wrapper around ``gdown``. Google Drive rate
+limits large public files and periodically changes its confirmation flow: if
+it fails, fetch by hand from the links it prints and re-run ``--check``.
+Nothing downstream cares how the bytes arrived.
 
 ``--check`` is the part that matters and the part that is tested. It compares
-what you have against what the reference implementation hard-codes, and
-reports in terms you can act on -- a wrong directory name, an archive unzipped
-one level too deep, an unpaired mask, a file extension the reference silently
+what you have against what the reference implementation hard-codes and reports
+in terms you can act on -- a wrong directory name, an archive unzipped one
+level too deep, an unpaired mask, a file extension the reference silently
 skips -- instead of failing on the first surprise several steps later.
-
-``--download`` is a convenience wrapper around ``gdown``. Google Drive rate
-limits large public files and periodically changes its confirmation flow, so
-treat it as best-effort: if it fails, download by hand from the links it
-prints and re-run ``--check``. Nothing downstream cares how the bytes arrived.
 """
 
 from __future__ import annotations
@@ -32,7 +50,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from polyptail.data.layout import check_layout  # noqa: E402
+from polyptail.data.layout import check_layout, link_dataset  # noqa: E402
 
 # Sources, from the Polyp-PVT README (sections 4.2 and 4.3).
 DATASET_DRIVE_ID = "1pFxb9NbM8mj_rlSawTlcXG1OdVGAbRQC"
@@ -142,14 +160,26 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=Path("./dataset"))
     ap.add_argument("--pretrained-dir", type=Path, default=Path("./pretrained_pth"))
-    ap.add_argument("--download", action="store_true", help="fetch and unpack the datasets")
+    ap.add_argument("--link", type=Path, default=None, metavar="SOURCE",
+                    help="symlink --root to an existing dataset tree (checks it first); "
+                         "use this when the data is already on the machine")
+    ap.add_argument("--download", action="store_true",
+                    help="fetch and unpack the datasets (only if you have no copy)")
     ap.add_argument("--pretrained", action="store_true", help="also fetch the backbone weights")
     ap.add_argument("--check", action="store_true", help="validate the layout only (the default)")
     ap.add_argument("--keep-archive", action="store_true", help="do not delete the downloaded zip")
     args = ap.parse_args()
 
+    if args.link is not None:
+        rc = link_dataset(args.link, args.root)
+        if rc != 0:
+            return rc
     if args.download:
-        download_datasets(args.root, args.keep_archive)
+        if args.root.exists():
+            print(f"{args.root} already exists -- skipping the download. "
+                  f"Remove it, or use --check, or --root elsewhere.", file=sys.stderr)
+        else:
+            download_datasets(args.root, args.keep_archive)
     if args.pretrained:
         download_pretrained(args.pretrained_dir)
 

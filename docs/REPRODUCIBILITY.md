@@ -28,7 +28,7 @@ makes them usable as a target at all.
 git clone <this repo> && cd Test
 conda env create -f environment.yml    # or environment-cpu.yml with no GPU
 conda activate polyptail
-pytest -q                              # 232 tests, ~25 s on CPU
+pytest -q                              # 241 tests, ~25 s on CPU
 ```
 
 `environment.yml` pins `torch==2.0.1+cu117` and caps NumPy below 2.0 (torch
@@ -37,12 +37,16 @@ reproduction, not housekeeping: every run records its resolved torch, NumPy,
 CUDA and cuDNN versions in `environment.json`, and a torch-version change is
 enough to move the last decimals.
 
-Data and backbones, from inside the environment:
+Data and backbones, from inside the environment. If the datasets are already
+on the machine — a Polyp-PVT checkout, a shared volume — point at them rather
+than fetching a second copy:
 
 ```bash
-python tools/prepare_data.py --download --pretrained
+python tools/prepare_data.py --link ../Polyp-PVT/dataset   # or --root <path>, or data.root=<path>
 python tools/prepare_data.py --check
 ```
+
+Only if you have no copy: `python tools/prepare_data.py --download --pretrained`.
 
 `--check` validates `./dataset/` against what the reference implementation
 hard-codes and names the actual problem — a renamed split, an archive unzipped

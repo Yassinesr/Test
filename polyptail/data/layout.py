@@ -30,6 +30,7 @@ mistaken for a broken download.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -39,7 +40,7 @@ from PIL import Image
 __all__ = [
     "EXPECTED_COUNTS", "TEST_SPLITS", "REFERENCE_IMAGE_EXTS",
     "REFERENCE_TRAIN_MASK_EXTS", "REFERENCE_TEST_MASK_EXTS",
-    "LayoutReport", "check_layout",
+    "LayoutReport", "check_layout", "link_dataset",
 ]
 
 #: Counts in the PraNet-distributed archive, as documented in the brief's §1.2.
@@ -239,7 +240,14 @@ def check_layout(root: Path, splits: Optional[list[str]] = None) -> LayoutReport
         _check_split(root, split, rep)
 
     # The reference Train.py needs this and the archive does not ship it.
-    if not (root / "TestDataset" / "test").is_dir():
+    if (root / "TestDataset" / "test").is_dir():
+        rep.notes.append(
+            "TestDataset/test/ exists. Nothing here reads it -- it is not in any split list in "
+            "configs/, so it cannot leak into a result -- and it is recognised rather than "
+            "flagged because the reference Train.py requires it. Keep it if you also run the "
+            "original code; whatever is in it is that code's checkpoint-selection criterion."
+        )
+    else:
         rep.notes.append(
             "TestDataset/test/ is absent. That is correct for the distributed archive and "
             "nothing here needs it -- but the reference Train.py calls "
@@ -272,3 +280,41 @@ def check_layout(root: Path, splits: Optional[list[str]] = None) -> LayoutReport
             "hard-coded in the reference code and in configs/base.yaml."
         )
     return rep
+
+
+def link_dataset(source: Path, dest: Path) -> int:
+    """Symlink ``dest`` -> ``source`` after checking ``source`` is a real tree."""
+    source = Path(source).expanduser()
+    if not source.is_dir():
+        print(f"source {source} is not a directory", file=sys.stderr)
+        return 1
+    source = source.resolve()
+
+    print(f"checking {source} before linking ...")
+    rep = check_layout(source)
+    print()
+    print(rep.summary())
+    print()
+    if not rep.ok:
+        print(f"refusing to link: {source} is not a usable dataset tree (see errors above).",
+              file=sys.stderr)
+        return 1
+
+    if dest.is_symlink():
+        current = dest.resolve()
+        if current == source:
+            print(f"{dest} already points at {source} -- nothing to do")
+            return 0
+        print(f"{dest} is a symlink to {current}. Remove it first if you meant to repoint it:\n"
+              f"  rm {dest}", file=sys.stderr)
+        return 1
+    if dest.exists():
+        print(f"{dest} already exists and is not a symlink. Move or remove it first, or skip\n"
+              f"linking and pass --root {source} / data.root={source} instead.", file=sys.stderr)
+        return 1
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.symlink_to(source, target_is_directory=True)
+    print(f"linked {dest} -> {source}")
+    print("Both checkouts now read the same bytes; nothing was copied.")
+    return 0

@@ -47,6 +47,13 @@ mismatch in the first with agreement in the second means "someone recompressed
 it"; a mismatch in both means "the data is different". Reporting them
 separately is the difference between a five-minute check and a day of doubt.
 
+Paths are stored **relative to the root**, never absolutely. So a manifest
+frozen against `./dataset` verifies unchanged against `/srv/data/polyp`, or
+against a symlink into a Polyp-PVT checkout, or on someone else's machine. Two
+repositories can share one copy of the data without either of them holding a
+weaker protocol for it, and moving the data later does not invalidate a frozen
+run.
+
 Expected counts, from the PraNet-distributed archives:
 
 | split | pairs |

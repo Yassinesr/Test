@@ -66,7 +66,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `232 passed` in about 25 seconds. These are CPU-only and need no data.
+Expect `241 passed` in about 25 seconds. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -83,43 +83,80 @@ there are 2248 real images and a GPU in the picture.
 
 ---
 
-## Step 3 — Lay out the data and the pretrained backbone
+## Step 3 — Point at the data, and check the layout
 
-Everything here runs inside the conda environment, which is where `gdown`
-lives. With the environment active:
+### If the data is already on this machine
+
+It usually is — a Polyp-PVT checkout next door already has
+`./dataset/TrainDataset` and `./dataset/TestDataset`. **Do not download it
+again.** Pick whichever of these suits you:
+
+```bash
+# A. Link it, so the default config works untouched. Nothing is copied.
+python tools/prepare_data.py --link ../Polyp-PVT/dataset
+
+# B. Leave it where it is and check it in place.
+python tools/prepare_data.py --check --root ../Polyp-PVT/dataset
+
+# C. No ./dataset at all: override the root per run.
+python tools/train.py --config configs/a0_baseline.yaml data.root=/srv/data/polyp-dataset
+```
+
+`--link` validates the target **before** creating the symlink, so a wrong path
+fails here — where the message is about your dataset — rather than at freeze
+time, where it is about a hash. It is idempotent, it refuses to clobber a real
+directory, and it refuses to silently repoint an existing link.
+
+With option C, remember `data.root` on *every* command, including
+`freeze_manifest.py --root` and `hash_collisions.py --root`. It is recorded in
+each run's `config.yaml`, so provenance survives either way.
+
+Both repositories then read the same bytes. That is fine, and it is worth
+knowing why: **manifests store paths relative to the root.** A manifest frozen
+through the symlink verifies unchanged against the real path, and vice versa,
+so sharing one dataset between two checkouts — or moving it later — does not
+invalidate a frozen protocol.
+
+The pretrained backbone still has to exist:
+
+```bash
+ls -l pretrained_pth/pvt_v2_b2.pth
+```
+
+If a Polyp-PVT checkout already has it, link that too:
+
+```bash
+mkdir -p pretrained_pth && ln -s ../../Polyp-PVT/pretrained_pth/pvt_v2_b2.pth pretrained_pth/
+```
+
+### Only if you have no copy
 
 ```bash
 python tools/prepare_data.py --download --pretrained
 ```
 
-That fetches the dataset archive and the backbone weights, unpacks them into
-`./dataset/` and `./pretrained_pth/`, flattens the redundant top-level
-directory the archive sometimes carries, and then validates the result.
+Best-effort: Google Drive rate-limits large public files and changes its
+confirmation flow periodically. If `gdown` fails, the tool prints the links —
+fetch them by hand and re-run the check. Nothing downstream cares how the
+bytes arrived.
 
-**Treat the download as best-effort.** Google Drive rate-limits large public
-files and changes its confirmation flow periodically. If `gdown` fails, the
-tool prints the links; fetch them by hand and re-run the check. Nothing
-downstream cares how the bytes arrived.
-
-* **Datasets** — Polyp-PVT README §4.2,
-  Google Drive file `1pFxb9NbM8mj_rlSawTlcXG1OdVGAbRQC`
-  (Baidu mirror code `sydz`). Unpack into `./dataset/`.
-* **PVTv2-B2** — Polyp-PVT README §4.3,
-  Google Drive folder `1Eu8v9vMRvt-dyCH0XSV2i77lAd62nPXV`
-  (Baidu code `w4vk`) → `./pretrained_pth/pvt_v2_b2.pth`.
-* **Res2Net-50-v1b** — only for the A7 control; `prepare_data.py` pulls it
-  over plain HTTPS, so it rarely needs a manual step.
+* **Datasets** — Polyp-PVT README §4.2, Google Drive file
+  `1pFxb9NbM8mj_rlSawTlcXG1OdVGAbRQC` (Baidu mirror code `sydz`).
+* **PVTv2-B2** — Polyp-PVT README §4.3, Google Drive folder
+  `1Eu8v9vMRvt-dyCH0XSV2i77lAd62nPXV` (Baidu code `w4vk`).
+* **Res2Net-50-v1b** — A7 control only; fetched over plain HTTPS, so it rarely
+  needs a manual step.
 
 ### Check the layout
 
 ```bash
-python tools/prepare_data.py --check
+python tools/prepare_data.py --check          # or --root <wherever it lives>
 ```
 
-This is the part that matters, and it runs without network. It compares what
-you have against what the reference implementation *hard-codes* — the five
+This is the part that matters, and it needs no network. It compares what you
+have against what the reference implementation *hard-codes* — the five
 test-split spellings, the `images/` and `masks/` subdirectories, the file
-extensions each reference dataloader accepts — and reports the actual problem
+extensions each reference dataloader accepts — and names the actual problem
 rather than failing several steps later:
 
 ```
@@ -135,7 +172,7 @@ TestDataset/ETIS-LaribPolypDB         196       196  ok
 The target layout:
 
 ```
-dataset/
+dataset/                       # a directory, or a symlink to one
   TrainDataset/{images,masks}/
   TestDataset/Kvasir/{images,masks}/
   TestDataset/CVC-ClinicDB/{images,masks}/
@@ -146,7 +183,7 @@ pretrained_pth/
   pvt_v2_b2.pth
 ```
 
-Things the checker will tell you about, in the order they actually happen:
+What it will tell you, in the order these actually happen:
 
 | it says | what happened |
 |---|---|
@@ -155,17 +192,23 @@ Things the checker will tell you about, in the order they actually happen:
 | *N image(s) have no mask with a matching name* | incomplete unpack; re-download rather than deleting the orphans |
 | *pairs differ in size* | the archive did not unpack cleanly |
 | *extension the reference dataloader filters out* | your copy works here but the original repo would silently skip those files, so the two are not comparable |
+| *N split(s) differ from the counts the PraNet archive distributes* | a warning, not an error — §1.2 documents a real 300-vs-380 discrepancy for CVC-ColonDB. Unexplained, not wrong |
 | *`TestDataset/test/` is absent* | **expected, and not a problem.** See below |
 
 ### One quirk worth knowing
 
 The released `Train.py` line 116 calls `test(model, test_path, 'test')`, i.e.
 it requires `./dataset/TestDataset/test/` — a directory the distributed
-archive does not contain. The original training script therefore cannot finish
-its first epoch on the released data until you create that directory yourself,
-and whatever you put in it silently becomes its checkpoint-selection
-criterion. Nothing in this project needs it, which is why the checker reports
-its absence as a note rather than an error.
+archive does not contain. The original training script cannot finish its first
+epoch on the released data until you create that directory yourself, and
+whatever you put in it silently becomes its checkpoint-selection criterion.
+Nothing in this project needs it, which is why the checker reports its absence
+as a note rather than an error.
+
+If your Polyp-PVT checkout *does* have a `TestDataset/test/` — because you
+created one to make the original code run — leave it. The checker recognises
+it and says so, and nothing here reads it: it appears in no split list in
+`configs/`, so it cannot leak into a result.
 
 ## Step 4 — Freeze the data (this is the protocol)
 
