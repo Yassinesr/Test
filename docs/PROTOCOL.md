@@ -47,8 +47,6 @@ mismatch in the first with agreement in the second means "someone recompressed
 it"; a mismatch in both means "the data is different". Reporting them
 separately is the difference between a five-minute check and a day of doubt.
 
-<<<<<<< HEAD
-=======
 Paths are stored **relative to the root**, never absolutely. So a manifest
 frozen against `./dataset` verifies unchanged against `/srv/data/polyp`, or
 against a symlink into a Polyp-PVT checkout, or on someone else's machine. Two
@@ -56,7 +54,6 @@ repositories can share one copy of the data without either of them holding a
 weaker protocol for it, and moving the data later does not invalidate a frozen
 run.
 
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 Expected counts, from the PraNet-distributed archives:
 
 | split | pairs |
@@ -144,8 +141,6 @@ affect whether a "reproduction" lands within ±0.5 mDice:
    every epoch and checkpoints on the best test mDice. That is selection on
    the test set. It is not implementable here: `run.select` accepts `last`, or
    `val_dice` against a fold held out of the **training** split.
-<<<<<<< HEAD
-=======
 5. **The selection set does not exist.** That same checkpointing call is
    `test(model, test_path, 'test')` — i.e. `./dataset/TestDataset/test/`, a
    directory the distributed archive does not contain. The released training
@@ -156,7 +151,6 @@ affect whether a "reproduction" lands within ±0.5 mDice:
    good-faith reproductions can differ on it without either noticing.
    `tools/prepare_data.py --check` reports the directory's absence as a note,
    because here its absence is correct.
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 
 Augmentation: the released default is **none** (`opt.augmentation` defaults to
 the boolean `False` and is compared against the string `'True'`, so the

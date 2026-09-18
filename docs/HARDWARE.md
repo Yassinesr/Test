@@ -2,34 +2,6 @@
 
 ## 1. Install
 
-<<<<<<< HEAD
-CUDA 11.4 means a ~470 driver. CUDA **minor version compatibility** applies
-inside the 11.x series: any `cu11x` PyTorch build runs on a driver ≥ 450.80.02,
-and sm_86 (Ampere, which the 3080 Ti is) has been natively compiled into every
-CUDA build since 11.1. So you are not restricted to `cu113`.
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-
-# Recommended: torch 2.0.1 + cu117. Newer kernels, same driver requirement.
-pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117
-
-# Conservative alternative if anything looks odd:
-# pip install torch==1.13.1 --index-url https://download.pytorch.org/whl/cu117
-
-pip install -r requirements.txt
-```
-
-There is **no torchvision and no timm dependency**. Images are decoded and
-transformed through Pillow, and the PVTv2 backbone vendors the three timm
-helpers it needs (`to_2tuple`, `trunc_normal_`, `DropPath`). That is deliberate:
-in the torch 1.12–2.0 range that CUDA 11.4 pins you to, timm and torchvision
-compatibility tables are a recurring source of silent breakage, and `timm`
-moved `timm.models.layers` to `timm.layers` in a way that breaks the official
-Polyp-PVT source outright.
-
-Confirm the GPU is actually visible before anything else:
-=======
 ### Recommended: conda for the environment, pip for torch
 
 ```bash
@@ -111,40 +83,19 @@ of silent breakage, and `timm` moved `timm.models.layers` to `timm.layers` in
 a way that breaks the official Polyp-PVT source outright.
 
 ### Check before anything else
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 
 ```bash
 python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
-<<<<<<< HEAD
-=======
 Expect `2.0.1+cu117 True NVIDIA GeForce RTX 3080 Ti`. If `torch.cuda.is_available()`
 is `False`, stop: the usual causes are a driver older than 450.80.02, or a CPU
 wheel installed by omitting the index URL.
 
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 The code handles both torch generations transparently: `weights_only` in
 `torch.load` (added in 1.13) and the `GradScaler` spelling change (2.4) are
 both version-guarded in `polyptail/utils/io.py`.
 
-<<<<<<< HEAD
-## 2. Pretrained weights
-
-```bash
-mkdir -p pretrained_pth
-# PVTv2-B2 for Polyp-PVT: from the Polyp-PVT release
-#   https://github.com/DengPingFan/Polyp-PVT  -> pretrained_pth/pvt_v2_b2.pth
-# Res2Net-50-v1b for the PraNet control (A7 only):
-#   https://shanghuagao.oss-cn-beijing.aliyuncs.com/res2net/res2net50_v1b_26w_4s-3cf99910.pth
-```
-
-Both loaders are **strict**: a checkpoint that does not line up raises instead
-of loading nothing. The reference implementation filters mismatched keys
-silently, so pointing it at the wrong file trains from scratch and never says
-so — which produces a "reproduction gap" that has nothing to do with the
-method.
-=======
 ## 2. Data and pretrained weights
 
 **If the data is already on this machine, do not download it again.** A
@@ -184,7 +135,6 @@ raises instead of loading nothing. The reference implementation filters
 mismatched keys silently, so pointing it at the wrong file trains from scratch
 and never says so — which produces a "reproduction gap" that has nothing to do
 with the method.
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 
 ## 3. Will batch 16 fit in 12 GB?
 

@@ -10,13 +10,9 @@ readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
     "torch>=1.12",
-<<<<<<< HEAD
-    "numpy>=1.21",
-=======
     # Capped below 2.0: torch 2.0.1, the build recommended for a CUDA 11.4
     # driver, predates NumPy 2 C-API support. See requirements.txt.
     "numpy>=1.21,<2",
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
     "scipy>=1.7",
     "pillow>=9.0",
     "pyyaml>=5.4",

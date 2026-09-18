@@ -26,24 +26,6 @@ makes them usable as a target at all.
 
 ```bash
 git clone <this repo> && cd Test
-<<<<<<< HEAD
-python -m venv .venv && source .venv/bin/activate
-pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117   # see docs/HARDWARE.md
-pip install -r requirements-dev.txt
-pytest -q          # 201 tests, ~25 s on CPU
-```
-
-Datasets go under `./dataset/` in the PraNet layout:
-
-```
-dataset/
-  TrainDataset/{images,masks}/
-  TestDataset/{Kvasir,CVC-ClinicDB,CVC-ColonDB,CVC-300,ETIS-LaribPolypDB}/{images,masks}/
-```
-
-Both are linked from the Polyp-PVT README. Pretrained backbones go under
-`./pretrained_pth/` — see `docs/HARDWARE.md`.
-=======
 conda env create -f environment.yml    # or environment-cpu.yml with no GPU
 conda activate polyptail
 pytest -q                              # 241 tests, ~25 s on CPU
@@ -71,7 +53,6 @@ hard-codes and names the actual problem — a renamed split, an archive unzipped
 one level too deep, an unpaired mask, an extension the reference silently
 skips. Run it until it is clean; everything after this assumes it is. See
 `docs/RUNBOOK.md` step 3 for the layout diagram.
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 
 ## 2. Freeze and audit the data — before any training
 
