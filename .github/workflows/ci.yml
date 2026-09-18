@@ -12,6 +12,15 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.9", "3.11"]
+        # Both NumPy majors, on purpose. The shipped pin is `numpy<2` because
+        # torch 2.0.1 -- the build recommended for a CUDA 11.4 driver --
+        # predates NumPy 2 C-API support. That is a *torch* constraint, not
+        # ours, so the code must keep working on either: NumPy 2 added
+        # `np.bitwise_count`, which polyptail/data/phash.py uses when present
+        # and emulates with a lookup table when absent, and only this matrix
+        # exercises both branches.
+        numpy: ["<2", ">=2"]
+    name: py${{ matrix.python-version }} numpy${{ matrix.numpy }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,13 +32,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements-dev.txt
+          # Override the shipped ceiling for the numpy>=2 leg of the matrix.
+          pip install "numpy${{ matrix.numpy }}"
+          python -c "import numpy, torch; print('numpy', numpy.__version__, 'torch', torch.__version__)"
       - name: Unit tests
         run: pytest -q
       - name: End-to-end smoke run on synthetic data
         run: |
           python tools/make_smoke_data.py --out ./_smoke_data
+          # The layout checker must reject a tree that is not the PraNet
+          # distribution; the smoke data deliberately is not one.
+          python tools/prepare_data.py --root ./_smoke_data --check && exit 1 || true
           python tools/verify_manifest.py --root ./_smoke_data --manifest ./_smoke_data/manifest.json
           python tools/hash_collisions.py --root ./_smoke_data \
             --manifest ./_smoke_data/manifest.json --out ./_smoke_data/collisions.json --quiet
           python tools/train.py --config configs/smoke.yaml run.name=ci
           python tools/evaluate.py --run _smoke_runs/ci --compare
+
+  conda:
+    runs-on: ubuntu-latest
+    name: conda env resolves
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment-cpu.yml
+          activate-environment: polyptail-cpu
+          auto-activate-base: false
+      - name: Unit tests in the conda environment
+        shell: bash -el {0}
+        run: |
+          python -c "import numpy, torch; print('numpy', numpy.__version__, 'torch', torch.__version__)"
+          pytest -q

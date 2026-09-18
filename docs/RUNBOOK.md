@@ -16,22 +16,37 @@ uninterpretable.
 git clone <your fork or this repo> polyptail && cd polyptail
 git checkout claude/cool-rubin-kd7m6s
 
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-python -m pip install --upgrade pip
+conda env create -f environment.yml
+conda activate polyptail
 ```
 
-Install torch **first**, for your CUDA, then everything else:
+That is the whole install: `environment.yml` brings up Python 3.10 and the
+scientific stack from conda-forge, then pulls `torch==2.0.1+cu117` from the
+official PyTorch wheel index via pip.
 
-```bash
-pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117
-pip install -r requirements-dev.txt
-```
+Two things in that file are deliberate and worth knowing, because both cause
+confusing first-run failures if you change them:
+
+* **PyTorch comes from pip, not from conda.** PyTorch deprecated its own
+  Anaconda channel, so `conda install pytorch` pulls from a frozen archive.
+  The pip wheels also bundle their own CUDA runtime, so the cu117 build runs
+  against your CUDA 11.4 driver without conda having to reconcile a
+  `cudatoolkit` against it. (A pure-conda alternative is in
+  `docs/HARDWARE.md` if you prefer it.)
+* **NumPy is capped below 2.0.** torch 2.0.1 was compiled against the NumPy
+  1.x C API and fails at import under NumPy 2. That ceiling lifts if you move
+  to torch >= 2.4, which needs a newer driver than CUDA 11.4 gives you.
 
 CUDA 11.4 means a ~470 driver. Minor-version compatibility applies inside
 11.x, so any `cu11x` wheel runs on a driver >= 450.80.02, and sm_86 (your
 3080 Ti) has been natively compiled in since CUDA 11.1. If anything looks odd,
-`torch==1.13.1` with the same index URL is the conservative fallback.
+swap `torch==2.0.1+cu117` for `torch==1.13.1+cu117` in `environment.yml` and
+re-create the environment. Same index; the most conservative combination that
+still supports your card.
+
+Prefer pip and a plain virtualenv? `requirements-dev.txt` plus
+`pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117`
+gives the same environment.
 
 **Check:**
 
@@ -51,7 +66,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `202 passed` in about 25 seconds. These are CPU-only and need no data.
+Expect `241 passed` in about 25 seconds. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -68,30 +83,96 @@ there are 2248 real images and a GPU in the picture.
 
 ---
 
-## Step 3 — Download the data and the pretrained backbone
+## Step 3 — Point at the data, and check the layout
 
-Both come from the official Polyp-PVT release
-(<https://github.com/DengPingFan/Polyp-PVT>):
+### If the data is already on this machine
 
-* **Datasets** — the "Data preparation" link,
-  Google Drive file `1pFxb9NbM8mj_rlSawTlcXG1OdVGAbRQC`
-  (Baidu mirror code `sydz`). Unpack into `./dataset/`.
-* **Pretrained PVTv2-B2** — the "Pretrained model" link,
-  Google Drive folder `1Eu8v9vMRvt-dyCH0XSV2i77lAd62nPXV`
-  (Baidu code `w4vk`). Put `pvt_v2_b2.pth` in `./pretrained_pth/`.
-
-Only if you intend to run A7 (the PraNet control), also:
+It usually is — a Polyp-PVT checkout next door already has
+`./dataset/TrainDataset` and `./dataset/TestDataset`. **Do not download it
+again.** Pick whichever of these suits you:
 
 ```bash
-mkdir -p pretrained_pth
-curl -L -o pretrained_pth/res2net50_v1b_26w_4s-3cf99910.pth \
-  https://shanghuagao.oss-cn-beijing.aliyuncs.com/res2net/res2net50_v1b_26w_4s-3cf99910.pth
+# A. Link it, so the default config works untouched. Nothing is copied.
+python tools/prepare_data.py --link ../Polyp-PVT/dataset
+
+# B. Leave it where it is and check it in place.
+python tools/prepare_data.py --check --root ../Polyp-PVT/dataset
+
+# C. No ./dataset at all: override the root per run.
+python tools/train.py --config configs/a0_baseline.yaml data.root=/srv/data/polyp-dataset
 ```
 
-The layout must end up exactly like this:
+`--link` validates the target **before** creating the symlink, so a wrong path
+fails here — where the message is about your dataset — rather than at freeze
+time, where it is about a hash. It is idempotent, it refuses to clobber a real
+directory, and it refuses to silently repoint an existing link.
+
+With option C, remember `data.root` on *every* command, including
+`freeze_manifest.py --root` and `hash_collisions.py --root`. It is recorded in
+each run's `config.yaml`, so provenance survives either way.
+
+Both repositories then read the same bytes. That is fine, and it is worth
+knowing why: **manifests store paths relative to the root.** A manifest frozen
+through the symlink verifies unchanged against the real path, and vice versa,
+so sharing one dataset between two checkouts — or moving it later — does not
+invalidate a frozen protocol.
+
+The pretrained backbone still has to exist:
+
+```bash
+ls -l pretrained_pth/pvt_v2_b2.pth
+```
+
+If a Polyp-PVT checkout already has it, link that too:
+
+```bash
+mkdir -p pretrained_pth && ln -s ../../Polyp-PVT/pretrained_pth/pvt_v2_b2.pth pretrained_pth/
+```
+
+### Only if you have no copy
+
+```bash
+python tools/prepare_data.py --download --pretrained
+```
+
+Best-effort: Google Drive rate-limits large public files and changes its
+confirmation flow periodically. If `gdown` fails, the tool prints the links —
+fetch them by hand and re-run the check. Nothing downstream cares how the
+bytes arrived.
+
+* **Datasets** — Polyp-PVT README §4.2, Google Drive file
+  `1pFxb9NbM8mj_rlSawTlcXG1OdVGAbRQC` (Baidu mirror code `sydz`).
+* **PVTv2-B2** — Polyp-PVT README §4.3, Google Drive folder
+  `1Eu8v9vMRvt-dyCH0XSV2i77lAd62nPXV` (Baidu code `w4vk`).
+* **Res2Net-50-v1b** — A7 control only; fetched over plain HTTPS, so it rarely
+  needs a manual step.
+
+### Check the layout
+
+```bash
+python tools/prepare_data.py --check          # or --root <wherever it lives>
+```
+
+This is the part that matters, and it needs no network. It compares what you
+have against what the reference implementation *hard-codes* — the five
+test-split spellings, the `images/` and `masks/` subdirectories, the file
+extensions each reference dataloader accepts — and names the actual problem
+rather than failing several steps later:
 
 ```
-dataset/
+split                               pairs  expected  status
+TrainDataset                         1450      1450  ok
+TestDataset/Kvasir                    100       100  ok
+TestDataset/CVC-ClinicDB               62        62  ok
+TestDataset/CVC-ColonDB               380       380  ok
+TestDataset/CVC-300                    60        60  ok
+TestDataset/ETIS-LaribPolypDB         196       196  ok
+```
+
+The target layout:
+
+```
+dataset/                       # a directory, or a symlink to one
   TrainDataset/{images,masks}/
   TestDataset/Kvasir/{images,masks}/
   TestDataset/CVC-ClinicDB/{images,masks}/
@@ -102,18 +183,32 @@ pretrained_pth/
   pvt_v2_b2.pth
 ```
 
-**Check:**
+What it will tell you, in the order these actually happen:
 
-```bash
-for d in dataset/TrainDataset dataset/TestDataset/*; do
-  echo "$(ls "$d/images" | wc -l)  $d"
-done
-```
+| it says | what happened |
+|---|---|
+| *unzipped one level too deep* | the archive expanded to `dataset/dataset/TrainDataset/...`; move the inner contents up |
+| *`CVC-T/` looks like it: rename to `CVC-300`* | the 60-image split travels under three names in the literature; the reference code hard-codes one |
+| *N image(s) have no mask with a matching name* | incomplete unpack; re-download rather than deleting the orphans |
+| *pairs differ in size* | the archive did not unpack cleanly |
+| *extension the reference dataloader filters out* | your copy works here but the original repo would silently skip those files, so the two are not comparable |
+| *N split(s) differ from the counts the PraNet archive distributes* | a warning, not an error — §1.2 documents a real 300-vs-380 discrepancy for CVC-ColonDB. Unexplained, not wrong |
+| *`TestDataset/test/` is absent* | **expected, and not a problem.** See below |
 
-Expect `1450, 100, 62, 380, 60, 196` (order depends on your shell's glob).
-Directory names must match exactly — `CVC-300`, not `CVC-T` or `EndoScene`.
+### One quirk worth knowing
 
----
+The released `Train.py` line 116 calls `test(model, test_path, 'test')`, i.e.
+it requires `./dataset/TestDataset/test/` — a directory the distributed
+archive does not contain. The original training script cannot finish its first
+epoch on the released data until you create that directory yourself, and
+whatever you put in it silently becomes its checkpoint-selection criterion.
+Nothing in this project needs it, which is why the checker reports its absence
+as a note rather than an error.
+
+If your Polyp-PVT checkout *does* have a `TestDataset/test/` — because you
+created one to make the original code run — leave it. The checker recognises
+it and says so, and nothing here reads it: it appears in no split list in
+`configs/`, so it cannot leak into a result.
 
 ## Step 4 — Freeze the data (this is the protocol)
 

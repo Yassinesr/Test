@@ -26,22 +26,33 @@ makes them usable as a target at all.
 
 ```bash
 git clone <this repo> && cd Test
-python -m venv .venv && source .venv/bin/activate
-pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117   # see docs/HARDWARE.md
-pip install -r requirements-dev.txt
-pytest -q          # 201 tests, ~25 s on CPU
+conda env create -f environment.yml    # or environment-cpu.yml with no GPU
+conda activate polyptail
+pytest -q                              # 241 tests, ~25 s on CPU
 ```
 
-Datasets go under `./dataset/` in the PraNet layout:
+`environment.yml` pins `torch==2.0.1+cu117` and caps NumPy below 2.0 (torch
+2.0.1 predates NumPy 2 C-API support). Pinning the environment is part of the
+reproduction, not housekeeping: every run records its resolved torch, NumPy,
+CUDA and cuDNN versions in `environment.json`, and a torch-version change is
+enough to move the last decimals.
 
-```
-dataset/
-  TrainDataset/{images,masks}/
-  TestDataset/{Kvasir,CVC-ClinicDB,CVC-ColonDB,CVC-300,ETIS-LaribPolypDB}/{images,masks}/
+Data and backbones, from inside the environment. If the datasets are already
+on the machine — a Polyp-PVT checkout, a shared volume — point at them rather
+than fetching a second copy:
+
+```bash
+python tools/prepare_data.py --link ../Polyp-PVT/dataset   # or --root <path>, or data.root=<path>
+python tools/prepare_data.py --check
 ```
 
-Both are linked from the Polyp-PVT README. Pretrained backbones go under
-`./pretrained_pth/` — see `docs/HARDWARE.md`.
+Only if you have no copy: `python tools/prepare_data.py --download --pretrained`.
+
+`--check` validates `./dataset/` against what the reference implementation
+hard-codes and names the actual problem — a renamed split, an archive unzipped
+one level too deep, an unpaired mask, an extension the reference silently
+skips. Run it until it is clean; everything after this assumes it is. See
+`docs/RUNBOOK.md` step 3 for the layout diagram.
 
 ## 2. Freeze and audit the data — before any training
 
