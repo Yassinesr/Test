@@ -48,6 +48,16 @@ Prefer pip and a plain virtualenv? `requirements-dev.txt` plus
 `pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117`
 gives the same environment.
 
+**Behind a proxy, or upstream blocked?** `conda env create` failing with
+`ProxyError ... Connection refused` means a proxy is configured and dead — a
+mirror will not fix that, because you would need the proxy to reach the mirror
+too. Triage it first. If upstream is merely slow or blocked and the Tsinghua
+mirrors are reachable directly, use `environment-cn.yml` instead. And if a
+working environment already exists on the machine (the one you run Polyp-PVT
+with), reuse it — this project needs only torch, numpy, scipy, pillow and
+pyyaml. All three routes, with the commands, are in
+[`docs/HARDWARE.md`](HARDWARE.md#restricted-networks-proxies-and-mirrors).
+
 **Check:**
 
 ```bash
@@ -66,7 +76,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `241 passed` in about 25 seconds. These are CPU-only and need no data.
+Expect `249 passed` in about 25 seconds. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data

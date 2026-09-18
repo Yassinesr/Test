@@ -38,6 +38,130 @@ If anything misbehaves, `torch==1.13.1+cu117` from the same index is the most
 conservative combination that still supports your card — edit the pip block
 in `environment.yml` and re-create the environment.
 
+### Restricted networks, proxies and mirrors
+
+**First, separate the two failure modes — they need opposite fixes.**
+
+```
+ProxyError: Conda cannot proceed due to an error in your proxy configuration.
+  ... Cannot connect to proxy ... [Errno 111] Connection refused
+```
+
+"Connection refused" from a *proxy* means a proxy is configured and nothing is
+listening on it. That is a broken proxy setting, not a blocked upstream, and a
+mirror will not fix it: if you genuinely need a proxy to reach the internet,
+you need it to reach the mirror too. Triage before changing anything:
+
+```bash
+env | grep -i -E '_proxy|_PROXY'          # stale vars are the usual culprit
+conda config --show proxy_servers channels default_channels
+cat ~/.condarc 2>/dev/null
+cat ~/.netrc  2>/dev/null                 # conda reads this too
+```
+
+* **No proxy is actually needed** (the vars are stale, e.g. inherited from a
+  `.bashrc` written for a different network):
+
+  ```bash
+  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
+  conda config --remove-key proxy_servers    # only if it is set
+  ```
+
+* **A proxy is required.** Set it for conda *and* pip; they do not share
+  configuration:
+
+  ```bash
+  conda config --set proxy_servers.http  http://user:pass@proxy:port
+  conda config --set proxy_servers.https http://user:pass@proxy:port
+  pip config set global.proxy http://user:pass@proxy:port
+  ```
+
+Note that the error in that traceback is about `repo.anaconda.com/pkgs/main`
+and `/pkgs/r` — the Anaconda `defaults` channels, which **this project does not
+use**. Conda appends them anyway unless told not to, which is why every
+environment file here declares `nodefaults`. If you are on an older checkout,
+add it:
+
+```yaml
+channels:
+  - conda-forge
+  - nodefaults
+```
+
+That alone removes one whole class of failure, and it sidesteps Anaconda's
+commercial terms for the `defaults` channels, which many organisations block
+deliberately.
+
+#### Tsinghua (TUNA) mirrors
+
+If upstream is reachable but slow or blocked — and the mirror is reachable
+*without* a proxy — use the mirrored environment:
+
+```bash
+conda env create -f environment-cn.yml
+conda activate polyptail
+```
+
+Check the mirrors respond before blaming them:
+
+```bash
+curl -sI https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/noarch/repodata.json | head -1
+curl -sI https://pypi.tuna.tsinghua.edu.cn/simple/torch/ | head -1
+```
+
+`environment-cn.yml` is the same environment as `environment.yml`; only the
+sources differ. It has **one substantive difference**: the pin is
+`torch==2.0.1`, not `torch==2.0.1+cu117`. A `+local` version exists only on
+the PyTorch index and no PyPI mirror can serve it. That costs nothing, because
+the default PyPI wheel for torch 2.0.1 *is* the CUDA 11.7 build — pytorch.org's
+previous-versions page gives `pip install torch==2.0.1` with no index URL as
+the CUDA 11.7 install. Confirm after installing:
+
+```bash
+python -c "import torch; print(torch.__version__, torch.version.cuda)"
+# expect: 2.0.1+cu117 11.7
+```
+
+If it reports 11.8 or 12.x, the mirror served a different build; fall back to
+`environment.yml`, or pin explicitly against the PyTorch index.
+
+To set the mirrors system-wide instead of per-file:
+
+```bash
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
+conda config --set show_channel_urls yes
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+TUNA has had to restrict its `anaconda/pkgs/*` mirrors under Anaconda's terms.
+Its `cloud/conda-forge` mirror is unencumbered, and with `nodefaults` that is
+the only conda channel this project needs.
+
+#### The path that needs no network at all
+
+If a working environment already exists on the machine — the one you run
+Polyp-PVT with, for instance — reuse it. This project's runtime dependencies
+are torch, numpy, scipy, pillow and pyyaml, all of which a Polyp-PVT
+environment already has bar possibly `scipy` and `pyyaml`:
+
+```bash
+conda activate <your-existing-env>
+python -c "import torch, numpy, scipy, PIL, yaml; print('all present')"
+pytest -q
+```
+
+Anything missing is one small package away, and `pytest`/`gdown` are optional
+(tests and the dataset downloader respectively). Two things to check before
+relying on it: that `torch.cuda.is_available()` is true, and that
+`numpy.__version__` is below 2 if torch is older than 2.4 — see the NumPy note
+above.
+
+Worth knowing while you are unblocking the network: **the dataset step needs
+no network either.** `tools/prepare_data.py --link` and `--check` are entirely
+local, and the manifest and duplicate-audit tools never touch the network. The
+only downloads this project ever needs are the Python packages and, if you do
+not already have them, the dataset archive and the pretrained backbone.
+
 ### CPU-only environment
 
 For the unit tests, the synthetic smoke run, or `tools/analyze.py` on results

@@ -1,0 +1,57 @@
+# Conda environment for POT-TC, via the Tsinghua (TUNA) mirrors.
+#
+#   conda env create -f environment-cn.yml
+#   conda activate polyptail
+#
+# Use this when repo.anaconda.com, pypi.org or download.pytorch.org are slow,
+# blocked or behind a proxy that refuses connections. It is byte-for-byte the
+# same environment as environment.yml; only the sources differ.
+#
+# THE ONE REAL DIFFERENCE: the torch pin is `torch==2.0.1`, not
+# `torch==2.0.1+cu117`. A `+local` version exists only on the PyTorch index, so
+# it cannot be served from a PyPI mirror. That costs nothing here, because the
+# **default PyPI wheel for torch 2.0.1 is the CUDA 11.7 build** -- pytorch.org's
+# own previous-versions page gives `pip install torch==2.0.1` with no index URL
+# as the CUDA 11.7 install. Verify after installing:
+#
+#   python -c "import torch; print(torch.__version__, torch.version.cuda)"
+#
+# Expect `2.0.1+cu117 11.7`. If it says 11.8 or 12.x, the mirror served a
+# different build: fall back to environment.yml, or pin explicitly against the
+# PyTorch index if you can reach it.
+#
+# The mirrors are not verified from inside this repository. Check reachability
+# first, in one command:
+#
+#   curl -sI https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/noarch/repodata.json | head -1
+#   curl -sI https://pypi.tuna.tsinghua.edu.cn/simple/torch/ | head -1
+#
+# Anything other than a 2xx/3xx means the mirror is not the problem you are
+# solving. See docs/HARDWARE.md, "Restricted networks and mirrors".
+#
+# NumPy is capped below 2.0 for the same reason as environment.yml: torch 2.0.1
+# predates NumPy 2 C-API support.
+
+name: polyptail
+
+channels:
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
+  # Everything here is on conda-forge, so the Anaconda `defaults` channels are
+  # never needed. That matters twice over on a mirror: TUNA has had to restrict
+  # its `anaconda/pkgs/*` mirrors under Anaconda's terms, while the conda-forge
+  # mirror is unencumbered.
+  - nodefaults
+
+dependencies:
+  - python=3.10
+  - pip
+  - numpy>=1.21,<2
+  - scipy>=1.7
+  - pillow>=9.0
+  - pyyaml>=5.4
+  - pytest>=7.0
+  - gdown
+  - tmux
+  - pip:
+      - -i https://pypi.tuna.tsinghua.edu.cn/simple
+      - torch==2.0.1

@@ -31,7 +31,7 @@ fixed.
 
 ```bash
 conda env create -f environment.yml && conda activate polyptail   # see docs/HARDWARE.md
-pytest -q                                            # 241 tests, ~25 s, CPU only
+pytest -q                                            # 249 tests, ~25 s, CPU only
 
 # End-to-end on synthetic data, no GPU and no downloads, ~30 s:
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -167,11 +167,12 @@ tools/                 prepare_data, freeze_manifest, verify_manifest, hash_coll
                        check_memory, train, evaluate, run_ablation, analyze,
                        make_smoke_data
 configs/               base + A0/A1/A2/A3/A5/A6/A7 + sweeps + a CPU smoke config
-tests/                 241 tests, CPU only
+tests/                 249 tests, CPU only
 docs/                  RUNBOOK, PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE,
                        REPRODUCIBILITY
 environment.yml        conda env (GPU): conda-forge stack + torch 2.0.1+cu117 via pip
 environment-cpu.yml    conda env (CPU): tests, smoke run, analysis
+environment-cn.yml     the same, via the Tsinghua mirrors
 ```
 
 No torchvision, no timm, no albumentations — see `docs/HARDWARE.md` for why
