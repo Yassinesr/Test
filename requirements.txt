@@ -1,0 +1,15 @@
+# Core runtime. Deliberately small: no torchvision, no timm, no albumentations.
+#
+# torchvision is not used (images are decoded and transformed through Pillow),
+# and the PVTv2 backbone vendors the three timm helpers it needs, so neither
+# library's version churn can break a run. That matters here because CUDA 11.4
+# pins torch to the 1.12-2.0 range, where timm and torchvision compatibility
+# tables are a common source of silent breakage.
+#
+# GPU builds are NOT pinned here -- install torch for your CUDA first, then
+# `pip install -r requirements.txt`. See docs/HARDWARE.md.
+torch>=1.12
+numpy>=1.21
+scipy>=1.7
+pillow>=9.0
+pyyaml>=5.4

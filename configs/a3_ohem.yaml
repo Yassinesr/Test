@@ -1,0 +1,17 @@
+# A3 -- separates "focus on hard images" from "shape the tail".  Uniform
+# weight on every exceedance, i.e. the mean over the worst p fraction: online
+# hard-example mining with the same threshold machinery.
+#
+# A1 - A3 isolates the shape of the EVT weighting.  That shape is not
+# cosmetic: at xi_hat < 0 the GPD weights rise with exceedance rank (chase the
+# worst frames), at xi_hat > 0 they fall (discount the extremes, which is
+# where label noise lives).  A3 does neither, always.
+_base: a1_pottc.yaml
+
+pot:
+  tail:
+    mode: ohem
+
+run:
+  name: a3_ohem
+  notes: "A3: uniform weighting over the exceedance set (hard-example mining)."

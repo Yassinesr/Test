@@ -1,0 +1,40 @@
+# CPU smoke test: exercises manifest -> train -> eval -> statistics end to end
+# on a synthetic dataset in a few seconds.  Never reportable (tiny_unet is
+# marked non-reportable in the model registry).
+_base: base.yaml
+
+data:
+  root: ./_smoke_data
+  manifest: ./_smoke_data/manifest.json
+  test_splits: [TestDataset/Fake]
+  size: 64
+  num_workers: 0
+  verify: hash
+
+model:
+  name: tiny_unet
+
+optim:
+  epochs: 2
+  batch_size: 4
+  scales: [1.0]
+  amp: "off"
+
+pot:
+  tail:
+    mode: gpd
+    lam: 0.3
+    warmup_frac: 0.0
+    buffer_size: 64
+    min_buffer: 16
+    min_exceedances: 4
+
+eval:
+  num_workers: 0
+  hd95: true
+  sweep: true
+
+run:
+  name: smoke
+  out_dir: ./_smoke_runs
+  log_every: 5
