@@ -1,0 +1,60 @@
+# Conda environment for POT-TC.
+#
+#   conda env create -f environment.yml
+#   conda activate polyptail
+#
+# Conda provides Python and the scientific stack; **PyTorch comes from pip**,
+# from the official wheel index. That split is deliberate:
+#
+#   * PyTorch deprecated its own Anaconda channel, so `conda install pytorch`
+#     pulls from a frozen archive that will not be updated and may eventually
+#     be withdrawn. The pip wheels at download.pytorch.org are the supported
+#     path.
+#   * The pip wheels bundle their own CUDA runtime, so the cu117 build runs
+#     against a CUDA 11.4 driver without conda having to reconcile a
+#     `cudatoolkit` package against your system driver.
+#
+# If you would rather have conda manage CUDA too, see "Pure-conda alternative"
+# in docs/HARDWARE.md. Both work; this one has fewer ways to go wrong.
+#
+# NOTE ON NUMPY: pinned below 2.0 on purpose. torch 2.0.1 -- the build this
+# project recommends for CUDA 11.4 -- was compiled against the NumPy 1.x C API
+# and fails at import with NumPy 2.x ("module compiled using NumPy 1.x cannot
+# be run in NumPy 2"). NumPy 2 support landed in torch 2.4. If you move to a
+# newer driver and a newer torch, you can drop the ceiling.
+
+name: polyptail
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.10
+  - pip
+  - numpy>=1.21,<2
+  - scipy>=1.7
+  - pillow>=9.0
+  - pyyaml>=5.4
+  - pytest>=7.0
+  # Used by tools/prepare_data.py --download to pull the datasets and the
+  # pretrained backbone from Google Drive. Nothing in polyptail imports it,
+  # and the download is optional -- fetching the archive by hand and running
+  # `tools/prepare_data.py --check` gets you to the same place.
+  - gdown
+  # Convenience only; nothing in polyptail imports them.
+  - tmux
+  - pip:
+      # CUDA 11.4 driver (~470.x). CUDA minor-version compatibility means any
+      # cu11x wheel runs on a driver >= 450.80.02, and sm_86 (RTX 30-series)
+      # has been natively compiled in since CUDA 11.1.
+      #
+      # The `+cu117` local version is part of the pin on purpose: it exists
+      # only on the PyTorch index, so pip cannot quietly serve the PyPI build
+      # of the same version number instead. `--extra-index-url` (rather than
+      # `--index-url`) lets torch's own dependencies resolve from PyPI.
+      #
+      # Conservative fallback if anything misbehaves -- the most cautious
+      # combination that still supports an RTX 30-series card:
+      #   - torch==1.13.1+cu117
+      - --extra-index-url https://download.pytorch.org/whl/cu117
+      - torch==2.0.1+cu117

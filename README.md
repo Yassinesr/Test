@@ -30,19 +30,35 @@ fixed.
 ## Quick start
 
 ```bash
+<<<<<<< HEAD
 pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117   # see docs/HARDWARE.md
 pip install -r requirements-dev.txt
 pytest -q                                            # 201 tests, ~25 s, CPU only
+=======
+conda env create -f environment.yml && conda activate polyptail   # see docs/HARDWARE.md
+pytest -q                                            # 241 tests, ~25 s, CPU only
+>>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 
 # End-to-end on synthetic data, no GPU and no downloads, ~30 s:
 python tools/make_smoke_data.py --out ./_smoke_data
 python tools/train.py --config configs/smoke.yaml
 ```
 
+<<<<<<< HEAD
 With the real datasets in `./dataset/` (PraNet layout) and backbones in
 `./pretrained_pth/`:
 
 ```bash
+=======
+Then, with the environment active:
+
+```bash
+# 0. Point at the data. Already have it -- e.g. a Polyp-PVT checkout next
+#    door? Link it; nothing is copied. Otherwise add --download.
+python tools/prepare_data.py --link ../Polyp-PVT/dataset
+python tools/prepare_data.py --check
+
+>>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 # 1. Freeze the data and publish the duplicate audit.  Do this first.
 python tools/freeze_manifest.py  --root ./dataset --out manifests/pranet_protocol.json
 python tools/hash_collisions.py  --root ./dataset --manifest manifests/pranet_protocol.json \
@@ -160,11 +176,23 @@ polyptail/
   eval/                the one evaluation implementation
   stats/               paired intervals and the falsification verdict
   engine/              the training loop
+<<<<<<< HEAD
 tools/                 freeze_manifest, verify_manifest, hash_collisions, check_memory,
                        train, evaluate, run_ablation, analyze, make_smoke_data
 configs/               base + A0/A1/A2/A3/A5/A6/A7 + sweeps + a CPU smoke config
 tests/                 201 tests, CPU only
 docs/                  PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE, REPRODUCIBILITY
+=======
+tools/                 prepare_data, freeze_manifest, verify_manifest, hash_collisions,
+                       check_memory, train, evaluate, run_ablation, analyze,
+                       make_smoke_data
+configs/               base + A0/A1/A2/A3/A5/A6/A7 + sweeps + a CPU smoke config
+tests/                 241 tests, CPU only
+docs/                  RUNBOOK, PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE,
+                       REPRODUCIBILITY
+environment.yml        conda env (GPU): conda-forge stack + torch 2.0.1+cu117 via pip
+environment-cpu.yml    conda env (CPU): tests, smoke run, analysis
+>>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 ```
 
 No torchvision, no timm, no albumentations — see `docs/HARDWARE.md` for why

@@ -7,9 +7,23 @@
 # tables are a common source of silent breakage.
 #
 # GPU builds are NOT pinned here -- install torch for your CUDA first, then
+<<<<<<< HEAD
 # `pip install -r requirements.txt`. See docs/HARDWARE.md.
 torch>=1.12
 numpy>=1.21
+=======
+# `pip install -r requirements.txt`. See docs/HARDWARE.md, or use the conda
+# route in environment.yml which does both in one step.
+#
+# NumPy is capped below 2.0 deliberately. torch 2.0.1 -- the build recommended
+# for a CUDA 11.4 driver -- was compiled against the NumPy 1.x C API and fails
+# at import under NumPy 2 ("module compiled using NumPy 1.x cannot be run in
+# NumPy 2"). NumPy 2 support landed in torch 2.4. If you are on a newer driver
+# and a newer torch, the ceiling can be dropped; keeping it costs nothing here
+# and removes a confusing first-run failure.
+torch>=1.12
+numpy>=1.21,<2
+>>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 scipy>=1.7
 pillow>=9.0
 pyyaml>=5.4
