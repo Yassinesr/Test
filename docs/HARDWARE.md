@@ -40,7 +40,17 @@ in `environment.yml` and re-create the environment.
 
 ### Restricted networks, proxies and mirrors
 
-**First, separate the two failure modes — they need opposite fixes.**
+**Run the doctor first.** It needs no dependencies and no environment:
+
+```bash
+python tools/doctor.py
+```
+
+It reports which of the cases below you are in and prints the exact commands,
+including a one-command test that settles the question without changing any
+configuration. The rest of this section is what it is deciding between.
+
+**The two failure modes need opposite fixes.**
 
 ```
 ProxyError: Conda cannot proceed due to an error in your proxy configuration.
