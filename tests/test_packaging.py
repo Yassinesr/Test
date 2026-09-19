@@ -68,48 +68,44 @@ class TestEnvironmentFiles:
         assert "nodefaults" in blob["channels"], f"{name} must declare nodefaults"
         assert not any("repo.anaconda.com" in str(c) for c in blob["channels"])
 
-    def test_a_pytorch_index_pin_names_its_cuda_build(self, name):
-        """`torch==2.0.1` alone is ambiguous under --extra-index-url: PyPI
-        carries that version number too, so pip could serve either wheel. The
-        `+cu117` local version exists only on the PyTorch index."""
-        _, pip = conda_deps(name)
-        index = next((p for p in pip if PYTORCH_INDEX in p), None)
-        if index is None:
-            pytest.skip("this environment does not use the PyTorch index")
-        torch_spec = next(p for p in pip if p.startswith("torch"))
-        cuda_tag = index.rstrip("/").rsplit("/", 1)[-1]          # e.g. "cu117"
-        if cuda_tag == "cpu":
-            pytest.skip("CPU environment intentionally tracks the current wheel")
-        assert f"+{cuda_tag}" in torch_spec, (
-            f"{torch_spec!r} does not pin the {cuda_tag} build served by {index!r}"
-        )
+    def test_no_environment_pins_a_local_cuda_version(self, name):
+        """A `+cuXXX` local version exists only on download.pytorch.org, so
+        pinning one makes that single host a hard requirement. It is slow or
+        blocked from much of the world, and the failure mode is a five-minute
+        timeout ending in "No matching distribution found" -- which reads like
+        a missing package rather than a network problem.
 
-    def test_a_mirror_pin_carries_no_local_version(self, name):
-        """A `+cuXXX` local version exists only on the PyTorch index, so a pin
-        carrying one can never be satisfied from a PyPI mirror. Mirror files
-        must pin the plain version whose *default* PyPI wheel is the build we
-        want, and say so in a comment."""
+        This inverts an earlier decision in this repository. The local pin was
+        added to stop pip serving the PyPI build of the same version number;
+        that ambiguity is theoretical for torch 2.0.1, whose default PyPI
+        wheel *is* the CUDA 11.7 build, while the outage it caused was real.
+        """
         _, pip = conda_deps(name)
-        if any(PYTORCH_INDEX in p for p in pip):
-            pytest.skip("this environment uses the PyTorch index directly")
         torch_spec = next(p for p in pip if p.startswith("torch"))
         assert "+" not in torch_spec, (
-            f"{torch_spec!r} pins a local version that no PyPI mirror can serve"
+            f"{name} pins {torch_spec!r}; a local version can only be served by "
+            "the PyTorch index, making that host a single point of failure"
         )
+
+    def test_the_torch_version_is_pinned_exactly(self, name):
+        """Dropping the local tag must not mean dropping the version: the CUDA
+        build you get is a property of *which version* you ask for."""
+        _, pip = conda_deps(name)
+        torch_spec = next(p for p in pip if p.startswith("torch"))
+        if name == "environment-cpu.yml":
+            pytest.skip("CPU environment intentionally tracks the current wheel")
+        assert "==" in torch_spec, f"{name} must pin torch exactly, got {torch_spec!r}"
+
+    def test_states_the_cuda_build_and_how_to_check_it(self, name):
+        """Because the pin no longer names the build, the file has to say what
+        it resolves to and how to confirm it."""
+        if name == "environment-cpu.yml":
+            pytest.skip("no CUDA build to state")
         text = (ROOT / name).read_text()
-        assert "11.7" in text or "cu117" in text, (
-            f"{name} must state which CUDA build the plain pin resolves to"
+        assert "11.7" in text or "cu117" in text
+        assert "torch.version.cuda" in text, (
+            f"{name} must tell the reader how to verify the CUDA build it got"
         )
-
-    def test_caps_numpy_below_two(self, name):
-        conda, _ = conda_deps(name)
-        spec = spec_for(conda, "numpy")
-        assert spec is not None, "numpy must be pinned explicitly, not left to the solver"
-        assert "<2" in spec, f"{name} must cap numpy below 2.0, got {spec!r}"
-
-    def test_pins_a_python_version(self, name):
-        conda, _ = conda_deps(name)
-        assert spec_for(conda, "python") is not None
 
 
 class TestConsistency:

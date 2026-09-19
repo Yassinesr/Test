@@ -7,9 +7,9 @@
 # blocked or behind a proxy that refuses connections. It is byte-for-byte the
 # same environment as environment.yml; only the sources differ.
 #
-# THE ONE REAL DIFFERENCE: the torch pin is `torch==2.0.1`, not
-# `torch==2.0.1+cu117`. A `+local` version exists only on the PyTorch index, so
-# it cannot be served from a PyPI mirror. That costs nothing here, because the
+# The torch pin is `torch==2.0.1`, as it is in environment.yml: a `+local`
+# version can only be served by download.pytorch.org, and depending on that
+# single host is what this file exists to avoid. Nothing is lost, because the
 # **default PyPI wheel for torch 2.0.1 is the CUDA 11.7 build** -- pytorch.org's
 # own previous-versions page gives `pip install torch==2.0.1` with no index URL
 # as the CUDA 11.7 install. Verify after installing:

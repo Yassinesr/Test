@@ -48,6 +48,15 @@ Prefer pip and a plain virtualenv? `requirements-dev.txt` plus
 `pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117`
 gives the same environment.
 
+**pip timed out on `download.pytorch.org` at the end?** The conda half already
+succeeded; finish the environment instead of re-creating it:
+
+```bash
+conda activate polyptail
+pip install torch==2.0.1        # or add -i https://pypi.tuna.tsinghua.edu.cn/simple
+python -c "import torch; print(torch.__version__, torch.version.cuda)"   # expect 11.7
+```
+
 **Behind a proxy, or upstream blocked?** Run `python tools/doctor.py` first —
 it is standard-library only, so it works in conda's `base` before any
 environment exists, and it prints the shortest route from whatever state you
@@ -79,7 +88,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `308 passed` in about 25 seconds. These are CPU-only and need no data.
+Expect `307 passed` in about 25 seconds. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
