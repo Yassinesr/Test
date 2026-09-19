@@ -27,6 +27,12 @@ name: polyptail
 
 channels:
   - conda-forge
+  # `nodefaults` stops conda appending the Anaconda `defaults` channels. Without
+  # it, conda contacts repo.anaconda.com for pkgs/main and pkgs/r even though
+  # nothing here comes from them -- which fails on a restricted network, and
+  # drags in Anaconda's commercial terms for no benefit. Everything needed is
+  # on conda-forge.
+  - nodefaults
 
 dependencies:
   - python=3.10

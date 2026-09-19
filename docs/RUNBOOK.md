@@ -16,19 +16,6 @@ uninterpretable.
 git clone <your fork or this repo> polyptail && cd polyptail
 git checkout claude/cool-rubin-kd7m6s
 
-<<<<<<< HEAD
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-python -m pip install --upgrade pip
-```
-
-Install torch **first**, for your CUDA, then everything else:
-
-```bash
-pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117
-pip install -r requirements-dev.txt
-```
-=======
 conda env create -f environment.yml
 conda activate polyptail
 ```
@@ -49,14 +36,10 @@ confusing first-run failures if you change them:
 * **NumPy is capped below 2.0.** torch 2.0.1 was compiled against the NumPy
   1.x C API and fails at import under NumPy 2. That ceiling lifts if you move
   to torch >= 2.4, which needs a newer driver than CUDA 11.4 gives you.
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 
 CUDA 11.4 means a ~470 driver. Minor-version compatibility applies inside
 11.x, so any `cu11x` wheel runs on a driver >= 450.80.02, and sm_86 (your
 3080 Ti) has been natively compiled in since CUDA 11.1. If anything looks odd,
-<<<<<<< HEAD
-`torch==1.13.1` with the same index URL is the conservative fallback.
-=======
 swap `torch==2.0.1+cu117` for `torch==1.13.1+cu117` in `environment.yml` and
 re-create the environment. Same index; the most conservative combination that
 still supports your card.
@@ -64,7 +47,16 @@ still supports your card.
 Prefer pip and a plain virtualenv? `requirements-dev.txt` plus
 `pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117`
 gives the same environment.
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
+
+**Behind a proxy, or upstream blocked?** `conda env create` failing with
+`ProxyError ... Connection refused` means a proxy is configured and dead — a
+mirror will not fix that, because you would need the proxy to reach the mirror
+too. Triage it first. If upstream is merely slow or blocked and the Tsinghua
+mirrors are reachable directly, use `environment-cn.yml` instead. And if a
+working environment already exists on the machine (the one you run Polyp-PVT
+with), reuse it — this project needs only torch, numpy, scipy, pillow and
+pyyaml. All three routes, with the commands, are in
+[`docs/HARDWARE.md`](HARDWARE.md#restricted-networks-proxies-and-mirrors).
 
 **Check:**
 
@@ -84,11 +76,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-<<<<<<< HEAD
-Expect `202 passed` in about 25 seconds. These are CPU-only and need no data.
-=======
-Expect `241 passed` in about 25 seconds. These are CPU-only and need no data.
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
+Expect `289 passed` in about 25 seconds. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -105,32 +93,6 @@ there are 2248 real images and a GPU in the picture.
 
 ---
 
-<<<<<<< HEAD
-## Step 3 — Download the data and the pretrained backbone
-
-Both come from the official Polyp-PVT release
-(<https://github.com/DengPingFan/Polyp-PVT>):
-
-* **Datasets** — the "Data preparation" link,
-  Google Drive file `1pFxb9NbM8mj_rlSawTlcXG1OdVGAbRQC`
-  (Baidu mirror code `sydz`). Unpack into `./dataset/`.
-* **Pretrained PVTv2-B2** — the "Pretrained model" link,
-  Google Drive folder `1Eu8v9vMRvt-dyCH0XSV2i77lAd62nPXV`
-  (Baidu code `w4vk`). Put `pvt_v2_b2.pth` in `./pretrained_pth/`.
-
-Only if you intend to run A7 (the PraNet control), also:
-
-```bash
-mkdir -p pretrained_pth
-curl -L -o pretrained_pth/res2net50_v1b_26w_4s-3cf99910.pth \
-  https://shanghuagao.oss-cn-beijing.aliyuncs.com/res2net/res2net50_v1b_26w_4s-3cf99910.pth
-```
-
-The layout must end up exactly like this:
-
-```
-dataset/
-=======
 ## Step 3 — Point at the data, and check the layout
 
 ### If the data is already on this machine
@@ -221,7 +183,6 @@ The target layout:
 
 ```
 dataset/                       # a directory, or a symlink to one
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
   TrainDataset/{images,masks}/
   TestDataset/Kvasir/{images,masks}/
   TestDataset/CVC-ClinicDB/{images,masks}/
@@ -232,20 +193,6 @@ pretrained_pth/
   pvt_v2_b2.pth
 ```
 
-<<<<<<< HEAD
-**Check:**
-
-```bash
-for d in dataset/TrainDataset dataset/TestDataset/*; do
-  echo "$(ls "$d/images" | wc -l)  $d"
-done
-```
-
-Expect `1450, 100, 62, 380, 60, 196` (order depends on your shell's glob).
-Directory names must match exactly — `CVC-300`, not `CVC-T` or `EndoScene`.
-
----
-=======
 What it will tell you, in the order these actually happen:
 
 | it says | what happened |
@@ -272,7 +219,6 @@ If your Polyp-PVT checkout *does* have a `TestDataset/test/` — because you
 created one to make the original code run — leave it. The checker recognises
 it and says so, and nothing here reads it: it appears in no split list in
 `configs/`, so it cannot leak into a result.
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 
 ## Step 4 — Freeze the data (this is the protocol)
 

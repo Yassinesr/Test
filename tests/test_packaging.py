@@ -20,7 +20,8 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-ENV_FILES = ["environment.yml", "environment-cpu.yml"]
+ENV_FILES = ["environment.yml", "environment-cpu.yml", "environment-cn.yml"]
+PYTORCH_INDEX = "download.pytorch.org"
 
 
 def conda_deps(name: str) -> tuple[list[str], list[str]]:
@@ -46,7 +47,9 @@ class TestEnvironmentFiles:
     def test_parses_and_names_an_environment(self, name):
         blob = yaml.safe_load((ROOT / name).read_text())
         assert blob["name"].startswith("polyptail")
-        assert "conda-forge" in blob["channels"]
+        # conda-forge, directly or through a mirror. Nothing here lives
+        # anywhere else, which is what makes `nodefaults` safe.
+        assert any("conda-forge" in str(c) for c in blob["channels"])
 
     def test_installs_torch_through_pip_not_conda(self, name):
         """PyTorch's own Anaconda channel is deprecated; the wheels are the
@@ -54,21 +57,48 @@ class TestEnvironmentFiles:
         conda, pip = conda_deps(name)
         assert spec_for(conda, "pytorch") is None
         assert any(p.startswith("torch") for p in pip)
-        assert any("download.pytorch.org" in p for p in pip)
+        assert any(p.startswith(("-i", "--index-url", "--extra-index-url")) for p in pip), \
+            "the pip section must state which index it installs torch from"
 
-    def test_the_gpu_pin_names_its_cuda_build_explicitly(self, name):
+    def test_never_falls_back_to_the_anaconda_default_channels(self, name):
+        """Without `nodefaults`, conda appends repo.anaconda.com even when the
+        file names only conda-forge -- which fails on a restricted network and
+        pulls in Anaconda's commercial terms for nothing."""
+        blob = yaml.safe_load((ROOT / name).read_text())
+        assert "nodefaults" in blob["channels"], f"{name} must declare nodefaults"
+        assert not any("repo.anaconda.com" in str(c) for c in blob["channels"])
+
+    def test_a_pytorch_index_pin_names_its_cuda_build(self, name):
         """`torch==2.0.1` alone is ambiguous under --extra-index-url: PyPI
         carries that version number too, so pip could serve either wheel. The
-        `+cu117` local version exists only on the PyTorch index, which makes
-        the pin mean what the docs say it means."""
-        if name != "environment.yml":
-            pytest.skip("CPU environment intentionally tracks the current wheel")
+        `+cu117` local version exists only on the PyTorch index."""
         _, pip = conda_deps(name)
+        index = next((p for p in pip if PYTORCH_INDEX in p), None)
+        if index is None:
+            pytest.skip("this environment does not use the PyTorch index")
         torch_spec = next(p for p in pip if p.startswith("torch"))
-        index = next(p for p in pip if "download.pytorch.org" in p)
         cuda_tag = index.rstrip("/").rsplit("/", 1)[-1]          # e.g. "cu117"
+        if cuda_tag == "cpu":
+            pytest.skip("CPU environment intentionally tracks the current wheel")
         assert f"+{cuda_tag}" in torch_spec, (
             f"{torch_spec!r} does not pin the {cuda_tag} build served by {index!r}"
+        )
+
+    def test_a_mirror_pin_carries_no_local_version(self, name):
+        """A `+cuXXX` local version exists only on the PyTorch index, so a pin
+        carrying one can never be satisfied from a PyPI mirror. Mirror files
+        must pin the plain version whose *default* PyPI wheel is the build we
+        want, and say so in a comment."""
+        _, pip = conda_deps(name)
+        if any(PYTORCH_INDEX in p for p in pip):
+            pytest.skip("this environment uses the PyTorch index directly")
+        torch_spec = next(p for p in pip if p.startswith("torch"))
+        assert "+" not in torch_spec, (
+            f"{torch_spec!r} pins a local version that no PyPI mirror can serve"
+        )
+        text = (ROOT / name).read_text()
+        assert "11.7" in text or "cu117" in text, (
+            f"{name} must state which CUDA build the plain pin resolves to"
         )
 
     def test_caps_numpy_below_two(self, name):

@@ -2,34 +2,6 @@
 
 ## 1. Install
 
-<<<<<<< HEAD
-CUDA 11.4 means a ~470 driver. CUDA **minor version compatibility** applies
-inside the 11.x series: any `cu11x` PyTorch build runs on a driver ≥ 450.80.02,
-and sm_86 (Ampere, which the 3080 Ti is) has been natively compiled into every
-CUDA build since 11.1. So you are not restricted to `cu113`.
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-
-# Recommended: torch 2.0.1 + cu117. Newer kernels, same driver requirement.
-pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117
-
-# Conservative alternative if anything looks odd:
-# pip install torch==1.13.1 --index-url https://download.pytorch.org/whl/cu117
-
-pip install -r requirements.txt
-```
-
-There is **no torchvision and no timm dependency**. Images are decoded and
-transformed through Pillow, and the PVTv2 backbone vendors the three timm
-helpers it needs (`to_2tuple`, `trunc_normal_`, `DropPath`). That is deliberate:
-in the torch 1.12–2.0 range that CUDA 11.4 pins you to, timm and torchvision
-compatibility tables are a recurring source of silent breakage, and `timm`
-moved `timm.models.layers` to `timm.layers` in a way that breaks the official
-Polyp-PVT source outright.
-
-Confirm the GPU is actually visible before anything else:
-=======
 ### Recommended: conda for the environment, pip for torch
 
 ```bash
@@ -65,6 +37,130 @@ NumPy 2 support arrived in torch 2.4, which wants a newer driver than CUDA
 If anything misbehaves, `torch==1.13.1+cu117` from the same index is the most
 conservative combination that still supports your card — edit the pip block
 in `environment.yml` and re-create the environment.
+
+### Restricted networks, proxies and mirrors
+
+**First, separate the two failure modes — they need opposite fixes.**
+
+```
+ProxyError: Conda cannot proceed due to an error in your proxy configuration.
+  ... Cannot connect to proxy ... [Errno 111] Connection refused
+```
+
+"Connection refused" from a *proxy* means a proxy is configured and nothing is
+listening on it. That is a broken proxy setting, not a blocked upstream, and a
+mirror will not fix it: if you genuinely need a proxy to reach the internet,
+you need it to reach the mirror too. Triage before changing anything:
+
+```bash
+env | grep -i -E '_proxy|_PROXY'          # stale vars are the usual culprit
+conda config --show proxy_servers channels default_channels
+cat ~/.condarc 2>/dev/null
+cat ~/.netrc  2>/dev/null                 # conda reads this too
+```
+
+* **No proxy is actually needed** (the vars are stale, e.g. inherited from a
+  `.bashrc` written for a different network):
+
+  ```bash
+  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
+  conda config --remove-key proxy_servers    # only if it is set
+  ```
+
+* **A proxy is required.** Set it for conda *and* pip; they do not share
+  configuration:
+
+  ```bash
+  conda config --set proxy_servers.http  http://user:pass@proxy:port
+  conda config --set proxy_servers.https http://user:pass@proxy:port
+  pip config set global.proxy http://user:pass@proxy:port
+  ```
+
+Note that the error in that traceback is about `repo.anaconda.com/pkgs/main`
+and `/pkgs/r` — the Anaconda `defaults` channels, which **this project does not
+use**. Conda appends them anyway unless told not to, which is why every
+environment file here declares `nodefaults`. If you are on an older checkout,
+add it:
+
+```yaml
+channels:
+  - conda-forge
+  - nodefaults
+```
+
+That alone removes one whole class of failure, and it sidesteps Anaconda's
+commercial terms for the `defaults` channels, which many organisations block
+deliberately.
+
+#### Tsinghua (TUNA) mirrors
+
+If upstream is reachable but slow or blocked — and the mirror is reachable
+*without* a proxy — use the mirrored environment:
+
+```bash
+conda env create -f environment-cn.yml
+conda activate polyptail
+```
+
+Check the mirrors respond before blaming them:
+
+```bash
+curl -sI https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/noarch/repodata.json | head -1
+curl -sI https://pypi.tuna.tsinghua.edu.cn/simple/torch/ | head -1
+```
+
+`environment-cn.yml` is the same environment as `environment.yml`; only the
+sources differ. It has **one substantive difference**: the pin is
+`torch==2.0.1`, not `torch==2.0.1+cu117`. A `+local` version exists only on
+the PyTorch index and no PyPI mirror can serve it. That costs nothing, because
+the default PyPI wheel for torch 2.0.1 *is* the CUDA 11.7 build — pytorch.org's
+previous-versions page gives `pip install torch==2.0.1` with no index URL as
+the CUDA 11.7 install. Confirm after installing:
+
+```bash
+python -c "import torch; print(torch.__version__, torch.version.cuda)"
+# expect: 2.0.1+cu117 11.7
+```
+
+If it reports 11.8 or 12.x, the mirror served a different build; fall back to
+`environment.yml`, or pin explicitly against the PyTorch index.
+
+To set the mirrors system-wide instead of per-file:
+
+```bash
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
+conda config --set show_channel_urls yes
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+TUNA has had to restrict its `anaconda/pkgs/*` mirrors under Anaconda's terms.
+Its `cloud/conda-forge` mirror is unencumbered, and with `nodefaults` that is
+the only conda channel this project needs.
+
+#### The path that needs no network at all
+
+If a working environment already exists on the machine — the one you run
+Polyp-PVT with, for instance — reuse it. This project's runtime dependencies
+are torch, numpy, scipy, pillow and pyyaml, all of which a Polyp-PVT
+environment already has bar possibly `scipy` and `pyyaml`:
+
+```bash
+conda activate <your-existing-env>
+python -c "import torch, numpy, scipy, PIL, yaml; print('all present')"
+pytest -q
+```
+
+Anything missing is one small package away, and `pytest`/`gdown` are optional
+(tests and the dataset downloader respectively). Two things to check before
+relying on it: that `torch.cuda.is_available()` is true, and that
+`numpy.__version__` is below 2 if torch is older than 2.4 — see the NumPy note
+above.
+
+Worth knowing while you are unblocking the network: **the dataset step needs
+no network either.** `tools/prepare_data.py --link` and `--check` are entirely
+local, and the manifest and duplicate-audit tools never touch the network. The
+only downloads this project ever needs are the Python packages and, if you do
+not already have them, the dataset archive and the pretrained backbone.
 
 ### CPU-only environment
 
@@ -111,40 +207,19 @@ of silent breakage, and `timm` moved `timm.models.layers` to `timm.layers` in
 a way that breaks the official Polyp-PVT source outright.
 
 ### Check before anything else
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 
 ```bash
 python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
-<<<<<<< HEAD
-=======
 Expect `2.0.1+cu117 True NVIDIA GeForce RTX 3080 Ti`. If `torch.cuda.is_available()`
 is `False`, stop: the usual causes are a driver older than 450.80.02, or a CPU
 wheel installed by omitting the index URL.
 
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 The code handles both torch generations transparently: `weights_only` in
 `torch.load` (added in 1.13) and the `GradScaler` spelling change (2.4) are
 both version-guarded in `polyptail/utils/io.py`.
 
-<<<<<<< HEAD
-## 2. Pretrained weights
-
-```bash
-mkdir -p pretrained_pth
-# PVTv2-B2 for Polyp-PVT: from the Polyp-PVT release
-#   https://github.com/DengPingFan/Polyp-PVT  -> pretrained_pth/pvt_v2_b2.pth
-# Res2Net-50-v1b for the PraNet control (A7 only):
-#   https://shanghuagao.oss-cn-beijing.aliyuncs.com/res2net/res2net50_v1b_26w_4s-3cf99910.pth
-```
-
-Both loaders are **strict**: a checkpoint that does not line up raises instead
-of loading nothing. The reference implementation filters mismatched keys
-silently, so pointing it at the wrong file trains from scratch and never says
-so — which produces a "reproduction gap" that has nothing to do with the
-method.
-=======
 ## 2. Data and pretrained weights
 
 **If the data is already on this machine, do not download it again.** A
@@ -184,7 +259,6 @@ raises instead of loading nothing. The reference implementation filters
 mismatched keys silently, so pointing it at the wrong file trains from scratch
 and never says so — which produces a "reproduction gap" that has nothing to do
 with the method.
->>>>>>> 76f695f8eb8f88345c44aead928ed10bcb542ec6
 
 ## 3. Will batch 16 fit in 12 GB?
 
