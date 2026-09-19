@@ -56,6 +56,10 @@ SOURCES = [
 PROXY_VARS = ["http_proxy", "https_proxy", "all_proxy", "no_proxy",
               "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"]
 
+#: Where a proxy export usually hides. Finding the file is most of the fix.
+SHELL_RC = ["~/.bashrc", "~/.bash_profile", "~/.profile", "~/.zshrc", "~/.zshenv",
+            "/etc/environment", "/etc/profile"]
+
 
 def rule(title: str) -> None:
     print()
@@ -192,6 +196,25 @@ def _read(path: Path) -> str:
         return ""
 
 
+def find_proxy_exports() -> list[tuple[str, int, str]]:
+    """Locate the lines that set a proxy, so they can actually be removed."""
+    hits: list[tuple[str, int, str]] = []
+    paths = [Path(p).expanduser() for p in SHELL_RC]
+    paths += sorted(Path("/etc/profile.d").glob("*.sh")) if Path("/etc/profile.d").is_dir() else []
+    for path in paths:
+        text = _read(path)
+        if not text:
+            continue
+        for i, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            low = stripped.lower()
+            if any(f"{v}=" in low for v in ("http_proxy", "https_proxy", "all_proxy", "ftp_proxy")):
+                hits.append((str(path), i, stripped))
+    return hits
+
+
 def check_config() -> dict:
     rule("2. Proxy and channel configuration")
     env_proxies = {v: os.environ[v] for v in PROXY_VARS if os.environ.get(v)}
@@ -200,6 +223,12 @@ def check_config() -> dict:
             print(f"  {k}={v}")
     else:
         print("  no *_proxy environment variables set")
+
+    exports = find_proxy_exports()
+    if exports:
+        print("  set from:")
+        for path, lineno, line in exports:
+            print(f"    {path}:{lineno}  {line}")
 
     condarc_proxies: list[str] = []
     for p in [Path.home() / ".condarc", Path("/etc/conda/.condarc"),
@@ -233,7 +262,8 @@ def check_config() -> dict:
                 if any(k in line for k in ("proxy", "index-url", "trusted-host")):
                     print(f"      {line.strip()}")
 
-    return {"env_proxies": env_proxies, "condarc_proxies": condarc_proxies}
+    return {"env_proxies": env_proxies, "condarc_proxies": condarc_proxies,
+            "exports": exports}
 
 
 def tcp_ok(host: str, port: int = 443) -> tuple[bool, str]:
@@ -276,8 +306,16 @@ def check_network(cfg: dict) -> dict:
             ok, why = tcp_ok(host, port)
             mark = "OK" if ok else "DEAD"
             print(f"  proxy {url}  ->  [{mark}] {why}")
-            if not ok:
+            local = host in ("127.0.0.1", "localhost", "::1")
+            if not ok and local:
+                print("    This proxy is on LOOPBACK, so it is a proxy client running on this")
+                print("    machine -- v2ray, clash, shadowsocks or similar -- and it is not")
+                print("    running. The shell variables outlive the client, which is why every")
+                print("    network tool fails while the machine itself is online.")
+            elif not ok:
                 print("    A configured proxy that refuses connections is the whole problem.")
+            cfg["proxy_is_local"] = local
+            cfg["proxy_alive"] = ok
             break
 
     print(f"  {'source':<20} {'direct TCP':<24} HTTPS")
@@ -360,7 +398,17 @@ def recommend(iface: dict, cfg: dict, net: dict) -> int:
             where.append(f"condarc ({', '.join(cfg['condarc_proxies'])})")
         steps.append(
             f"A proxy is configured, in: {' and '.join(where)}.\n"
-            "\n"
+            + ("\n  It points at LOOPBACK and is not answering: a local proxy client that is\n"
+               "  not running. Nothing on this machine can reach the network through it.\n"
+               if cfg.get("proxy_is_local") and cfg.get("proxy_alive") is False else "")
+            + (("\n  Set by:\n" + "".join(
+                f"      {path}:{lineno}  {line}\n" for path, lineno, line in cfg["exports"])
+               + "\n  Comment those lines out (keeping a backup), then open a new shell:\n"
+                 "      cp ~/.bashrc ~/.bashrc.bak\n"
+                 "      sed -i -E 's/^([[:space:]]*export[[:space:]]+(http_proxy|https_proxy|"
+                 "all_proxy|ftp_proxy)=)/# \\1/' ~/.bashrc\n")
+               if cfg.get("exports") else "")
+            + "\n"
             "  FIRST, prove which layer is at fault without changing any configuration.\n"
             "  This runs one command with the proxy variables emptied for that command only:\n"
             "\n"

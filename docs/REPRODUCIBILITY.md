@@ -29,7 +29,7 @@ git clone <this repo> && cd Test
 conda env create -f environment.yml    # environment-cpu.yml with no GPU,
                                        # environment-cn.yml behind the TUNA mirrors
 conda activate polyptail
-pytest -q                              # 304 tests, ~25 s on CPU
+pytest -q                              # 308 tests, ~25 s on CPU
 ```
 
 `environment.yml` pins `torch==2.0.1+cu117` and caps NumPy below 2.0 (torch

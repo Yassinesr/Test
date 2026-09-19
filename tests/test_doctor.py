@@ -191,3 +191,55 @@ class TestRecommendation:
         assert "freeze_manifest" in out          # the work that is NOT blocked
         assert "CPU-ONLY build" in out           # and the reason it is
         assert "CUDA included" not in out
+
+
+class TestProxySourceLocation:
+    """Finding the file that sets the proxy is most of the fix; leaving the
+    user to grep for it is a round trip the tool should not cost them."""
+
+    def _home(self, tmp_path, body: str):
+        (tmp_path / ".bashrc").write_text(body)
+        return tmp_path
+
+    def test_locates_exports_with_file_and_line(self, tmp_path, monkeypatch):
+        home = self._home(tmp_path, "export PATH=/x\n"
+                                    "export http_proxy=http://127.0.0.1:16041\n"
+                                    "export https_proxy=http://127.0.0.1:16041\n")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        hits = load_doctor().find_proxy_exports()
+        found = {(Path(p).name, n) for p, n, _ in hits}
+        assert (".bashrc", 2) in found and (".bashrc", 3) in found
+
+    def test_ignores_already_commented_lines(self, tmp_path, monkeypatch):
+        """Otherwise it keeps reporting a proxy the user has already disabled."""
+        home = self._home(tmp_path, "# export http_proxy=http://old:3128\n"
+                                    "export https_proxy=http://127.0.0.1:16041\n")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        hits = load_doctor().find_proxy_exports()
+        assert len(hits) == 1 and "https_proxy" in hits[0][2]
+
+    def test_does_not_match_unrelated_exports(self, tmp_path, monkeypatch):
+        home = self._home(tmp_path, "export PATH=/x\nexport NO_PROXY_SETTING=1\n")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        assert load_doctor().find_proxy_exports() == []
+
+    def test_recommendation_quotes_the_lines_and_a_safe_sed(self, capsys, tmp_path):
+        d = load_doctor()
+        cfg = {
+            "env_proxies": {"http_proxy": "http://127.0.0.1:16041"},
+            "condarc_proxies": [],
+            "exports": [(str(tmp_path / ".bashrc"), 142,
+                         "export http_proxy=http://127.0.0.1:16041")],
+            "proxy_is_local": True, "proxy_alive": False,
+        }
+        d.recommend({"usable": True, "cuda": False, "cuda_kind": "cpu_only_wheel",
+                     "missing": [], "optional_missing": [], "notes": []},
+                    cfg, {"conda-forge": True, "PyPI": True})
+        out = capsys.readouterr().out
+        assert ".bashrc:142" in out                 # names the exact line
+        assert "LOOPBACK" in out                    # explains why it is dead
+        assert "cp ~/.bashrc ~/.bashrc.bak" in out  # backs up before editing
+        assert "sed -i -E" in out
