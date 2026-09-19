@@ -69,17 +69,29 @@ first-run failure:
   and fails at import under it. The cap is identical in all four install paths
   and `tests/test_packaging.py` asserts they agree.
 
-Behind a proxy, or `conda env create` failing? `ProxyError … Connection
-refused` means a proxy is configured and dead — a mirror cannot fix that,
-because you would need the proxy to reach the mirror. Triage, mirrors, and a
-route that needs **no network at all** (reuse the environment you already run
-Polyp-PVT with — this project needs only torch, numpy, scipy, pillow, pyyaml)
-are in [`docs/HARDWARE.md`](docs/HARDWARE.md#restricted-networks-proxies-and-mirrors).
+**If `conda env create` fails, run the doctor before anything else:**
+
+```bash
+python tools/doctor.py
+```
+
+Standard library only, so it runs in conda's `base` before any environment
+exists — which is the situation it is for. It reports whether the interpreter
+you are in can already run the project, what proxy and channel configuration
+is in effect, which package sources are reachable directly, and then prints
+the shortest route from where you are to a working setup.
+
+A `ProxyError … Connection refused` specifically means a proxy is configured
+and dead. A mirror cannot fix that — you would need the proxy to reach the
+mirror. The doctor prints a one-command test that settles which layer is at
+fault without changing any configuration. Full triage, mirrors, and a route
+needing **no network at all** are in
+[`docs/HARDWARE.md`](docs/HARDWARE.md#restricted-networks-proxies-and-mirrors).
 
 ## 2. Verify the install — no data, no GPU, under a minute
 
 ```bash
-pytest -q                                          # 289 passed, ~25 s
+pytest -q                                          # 297 passed, ~25 s
 python tools/make_smoke_data.py --out ./_smoke_data
 python tools/train.py --config configs/smoke.yaml  # full pipeline on synthetic data
 ```
@@ -319,11 +331,11 @@ polyptail/
   eval/                the one evaluation implementation
   stats/               paired intervals and the falsification verdict
   engine/              the training loop
-tools/                 prepare_data, freeze_manifest, verify_manifest, hash_collisions,
-                       check_memory, train, evaluate, run_ablation, analyze,
-                       make_smoke_data
+tools/                 doctor, prepare_data, freeze_manifest, verify_manifest,
+                       hash_collisions, check_memory, train, evaluate,
+                       run_ablation, analyze, make_smoke_data
 configs/               base + A0/A1/A2/A3/A5/A6/A7 + sweeps + a CPU smoke config
-tests/                 289 tests, CPU only
+tests/                 297 tests, CPU only
 docs/                  RUNBOOK, PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE,
                        REPRODUCIBILITY
 environment.yml        conda (GPU): conda-forge + torch 2.0.1+cu117 via pip
@@ -352,7 +364,7 @@ CUDA 11.4.
 # What is verified, and what is not
 
 Verified by running it, on CPU, against synthetic data shaped like the PraNet
-distribution: the 289 tests; the smoke run; `prepare_data --link/--check`;
+distribution: the 297 tests; the smoke run; `prepare_data --link/--check`;
 `freeze_manifest`; `verify_manifest` against both a symlink and the real path;
 `hash_collisions`; a 3-arm × 3-seed `run_ablation`; `evaluate --compare`; and
 `analyze` including the verdict. Under both NumPy majors.
