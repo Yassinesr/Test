@@ -22,7 +22,9 @@ and then prints the shortest route from where you are to a working setup.
 from __future__ import annotations
 
 import os
+import shutil
 import socket
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -96,30 +98,91 @@ def check_interpreter() -> dict:
                 f"torch {tv} predates NumPy 2 C-API support but NumPy is {nv}. "
                 "This fails at import. Install 'numpy<2'."
             )
+    cuda_ok, cuda_kind = False, "no torch"
     if "torch" in found:
-        torch = found["torch"]
-        try:
-            if torch.cuda.is_available():
-                print(f"  CUDA: yes -- {torch.cuda.get_device_name(0)}, "
-                      f"built against CUDA {torch.version.cuda}")
-            else:
-                print("  CUDA: NO -- tests and the smoke run work; training does not")
-                notes.append("torch reports no CUDA device. Check the driver, or that this "
-                             "is not a CPU-only wheel.")
-        except Exception as exc:
-            notes.append(f"torch is installed but querying CUDA failed: {exc}")
+        cuda_ok, cuda_kind = _check_cuda(found["torch"], notes)
 
     usable = not missing
     print()
-    if usable:
-        print("  => This interpreter can run the project as it is.")
+    if usable and cuda_ok:
+        print("  => This interpreter can run the project, training included.")
+    elif usable:
+        print("  => This interpreter can run the tests and the CPU smoke run, but NOT")
+        print("     training: no usable CUDA device (see above).")
     else:
         print(f"  => Missing {len(missing)} required package(s): "
               f"{', '.join(p for p, _ in missing)}")
     for n in notes:
         print(f"  !! {n}")
-    return {"usable": usable, "missing": [p for p, _ in missing],
+    return {"usable": usable, "cuda": cuda_ok, "cuda_kind": cuda_kind,
+            "missing": [p for p, _ in missing],
             "optional_missing": [p for p, _ in optional_missing], "notes": notes}
+
+
+def _nvidia_smi() -> str | None:
+    """What the driver says, independent of torch."""
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, "--query-gpu=name,driver_version",
+                              "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=20)
+        return out.stdout.strip() or (out.stderr.strip() or None)
+    except Exception:
+        return None
+
+
+def _check_cuda(torch, notes: list[str]) -> tuple[bool, str]:
+    """Distinguish the three reasons torch reports no CUDA. They differ entirely.
+
+    A CPU-only wheel needs a different package; a CUDA wheel with no visible
+    device is a driver or container problem; a driver mismatch is a third
+    thing again. `torch.cuda.is_available()` collapses all three into False,
+    which is why so much time gets lost here.
+    """
+    built = getattr(getattr(torch, "version", None), "cuda", None)
+    smi = _nvidia_smi()
+    try:
+        available = bool(torch.cuda.is_available())
+    except Exception as exc:
+        notes.append(f"querying torch.cuda failed: {exc}")
+        available = False
+
+    if available:
+        try:
+            print(f"  CUDA: yes -- {torch.cuda.get_device_name(0)}, "
+                  f"torch built against CUDA {built}")
+        except Exception:
+            print(f"  CUDA: yes -- torch built against CUDA {built}")
+        return True, "ok"
+
+    print(f"  CUDA: NO   (torch.version.cuda = {built!r})")
+    if smi:
+        print(f"  nvidia-smi: {smi}")
+    else:
+        print("  nvidia-smi: not found or failed")
+
+    if built is None:
+        notes.append(
+            "This is a CPU-ONLY build of torch -- torch.version.cuda is None. No driver "
+            "fix will change that; training needs a CUDA build. environment.yml installs "
+            "torch 2.0.1+cu117."
+        )
+        return False, "cpu_only_wheel"
+    if not smi:
+        notes.append(
+            f"torch is a CUDA build (cu{str(built).replace('.', '')}) but nvidia-smi is "
+            "absent, so the driver is not installed or not visible from here. That is a "
+            "system/driver problem, not a Python one."
+        )
+        return False, "no_driver"
+    notes.append(
+        f"torch is a CUDA build (cu{str(built).replace('.', '')}) and the driver responds, "
+        "but no device is visible. Check CUDA_VISIBLE_DEVICES, and that this shell is not "
+        "inside a container without --gpus."
+    )
+    return False, "driver_but_no_device"
 
 
 def _read(path: Path) -> str:
@@ -236,14 +299,49 @@ def recommend(iface: dict, cfg: dict, net: dict) -> int:
 
     steps: list[str] = []
 
-    if iface["usable"]:
+    if iface["usable"] and iface["cuda"]:
         steps.append(
-            "This interpreter ALREADY has everything required. You do not need to create\n"
-            "  an environment at all -- run the project right here:\n"
+            "This interpreter ALREADY has everything required, CUDA included. You do not\n"
+            "  need to create an environment at all -- start here:\n"
+            "      pytest -q\n"
+            "      python tools/prepare_data.py --check"
+        )
+    elif iface["usable"]:
+        steps.append(
+            "This interpreter has every package, so the offline half of the workflow works\n"
+            "  RIGHT NOW, with no network and no new environment:\n"
             "      pytest -q\n"
             "      python tools/make_smoke_data.py --out ./_smoke_data\n"
-            "      python tools/train.py --config configs/smoke.yaml"
+            "      python tools/train.py --config configs/smoke.yaml\n"
+            "      python tools/prepare_data.py --link ../Polyp-PVT/dataset\n"
+            "      python tools/freeze_manifest.py --root ./dataset --out manifests/pranet_protocol.json\n"
+            "      python tools/hash_collisions.py --root ./dataset \\\n"
+            "          --manifest manifests/pranet_protocol.json --out manifests/collisions.json\n"
+            "  Training is the only thing blocked, and only by CUDA -- see below."
         )
+    if iface["usable"] and not iface["cuda"]:
+        kind = iface["cuda_kind"]
+        if kind == "cpu_only_wheel":
+            steps.append(
+                "This torch is a CPU-ONLY build, so training cannot work here whatever the\n"
+                "  driver does. Once the network is sorted, build the project environment --\n"
+                "  it pins the CUDA 11.7 build:\n"
+                "      conda env create -f environment.yml && conda activate polyptail\n"
+                "  If you already run Polyp-PVT in another environment, check that one first:\n"
+                "      conda activate <your-polyp-pvt-env> && python tools/doctor.py"
+            )
+        elif kind == "no_driver":
+            steps.append(
+                "torch is a CUDA build but nvidia-smi is missing: the NVIDIA driver is not\n"
+                "  installed or not visible from this shell. That is a system problem --\n"
+                "  no Python change will fix it."
+            )
+        elif kind == "driver_but_no_device":
+            steps.append(
+                "torch is a CUDA build and the driver responds, but no device is visible.\n"
+                "  Check CUDA_VISIBLE_DEVICES, and whether this shell is inside a container\n"
+                "  started without --gpus."
+            )
     elif iface["missing"] and set(iface["missing"]) <= {"scipy", "pyyaml", "pillow"}:
         steps.append(
             "This interpreter is nearly there -- it only lacks "
