@@ -88,7 +88,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `307 passed` in about 25 seconds. These are CPU-only and need no data.
+Expect `309 passed` in about 25 seconds. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -523,7 +523,8 @@ mis-annotated ones.
 | `RuntimeError: ... keys loaded, N missing` | wrong or corrupt backbone checkpoint | re-download; this error exists so you do not train from scratch by accident |
 | `torch.cuda.OutOfMemoryError` mid-run | headroom was marginal | drop a rung in step 6, restart the affected seed |
 | a seed died overnight | anything | re-run the identical `run_ablation.py` command; completed seeds are skipped |
-| numbers differ slightly between identical runs | cuDNN autotuning | expected. `run.deterministic=true` for bit-comparable runs, at 10-20% throughput |
+| numbers differ slightly between identical runs | cuDNN autotuning, plus bilinear upsample backward, which has no deterministic CUDA kernel | expected, and not fully fixable on GPU. `run.deterministic=true` removes the autotuning part at 10-20% throughput; a fixed seed then reproduces a run closely, not bit-exactly. See `docs/REPRODUCIBILITY.md` §6 |
+| `UserWarning: upsample_bilinear2d_backward_out_cuda does not have a deterministic implementation` | you set `run.deterministic=true` | expected and harmless — the op keeps its non-deterministic kernel so training can proceed |
 
 Re-scoring a checkpoint must reproduce its run exactly:
 

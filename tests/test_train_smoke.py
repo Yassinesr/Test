@@ -105,7 +105,16 @@ class TestProtocolGuards:
         blob = json.loads((tmp_path / "runs" / "val" / "results.json").read_text())
         assert blob["selected"]["source"] == "val_dice"
 
-    def test_same_seed_gives_the_same_result(self, synthetic_dataset, tmp_path):
+    def test_same_seed_reproduces_a_run_to_tolerance(self, synthetic_dataset, tmp_path):
+        """A tolerance, not equality -- deliberately.
+
+        `run.deterministic=true` removes cuDNN autotuning and every kernel
+        that has a deterministic alternative, but bilinear upsample backward
+        has none on CUDA and this decoder uses it throughout. So a fixed seed
+        reproduces a GPU run closely, not bit-exactly. Asserting equality here
+        would pass on CPU and quietly mislead anyone reading it as a guarantee
+        for the runs that matter.
+        """
         a = train(smoke_cfg(synthetic_dataset, tmp_path, **{
             "run.name": "seedA", "run.seed": 7, "run.deterministic": "true"}))
         b = train(smoke_cfg(synthetic_dataset, tmp_path, **{
@@ -135,3 +144,37 @@ def test_the_loss_term_adds_no_parameters(synthetic_dataset, tmp_path):
         "run.name": "p_gpd", "pot.tail.mode": "gpd",
         "pot.tail.buffer_size": 48, "pot.tail.min_buffer": 12, "pot.tail.min_exceedances": 4}))
     assert a["params"] == b["params"]
+
+
+class TestDeterminismIsHonest:
+    """Asking for determinism on CUDA must not silently under-deliver."""
+
+    def test_warns_that_gpu_runs_are_not_bit_identical(self, monkeypatch, caplog):
+        import logging
+
+        import torch
+
+        from polyptail.utils.env import seed_everything
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "manual_seed_all", lambda s: None)
+        with caplog.at_level(logging.WARNING, logger="polyptail.utils.env"):
+            seed_everything(0, deterministic=True)
+        text = " ".join(r.message for r in caplog.records)
+        assert "bilinear" in text and "NOT" in text, (
+            "requesting determinism on CUDA must say that bit-identical runs are "
+            f"not achievable; got: {text!r}"
+        )
+
+    def test_stays_quiet_when_determinism_is_not_requested(self, monkeypatch, caplog):
+        import logging
+
+        import torch
+
+        from polyptail.utils.env import seed_everything
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "manual_seed_all", lambda s: None)
+        with caplog.at_level(logging.WARNING, logger="polyptail.utils.env"):
+            seed_everything(0, deterministic=False)
+        assert not [r for r in caplog.records if "bilinear" in r.message]
