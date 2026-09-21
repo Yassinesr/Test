@@ -88,7 +88,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `319 passed` in about 25 seconds. These are CPU-only and need no data.
+Expect `349 passed` in about 25 seconds. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -196,6 +196,8 @@ The target layout:
 ```
 dataset/                       # a directory, or a symlink to one
   TrainDataset/{images,masks}/
+  ValidationDataset/{images,masks}/   # optional; see "If you hold out your own
+                                      # validation split" below
   TestDataset/Kvasir/{images,masks}/
   TestDataset/CVC-ClinicDB/{images,masks}/
   TestDataset/CVC-ColonDB/{images,masks}/
@@ -220,9 +222,13 @@ What it will tell you, in the order these actually happen:
 
 ### If a count differs
 
-The checker does not stop at `differs (-162)`. It has already listed the
-directory, so it spends the rest of that listing on telling you which cause
-you are looking at:
+First: if you held out your own validation split, this is not the section you
+want — a `ValidationDataset/` that accounts for the shortfall is reconciled,
+not reported, and the status reads `re-split` instead. See below.
+
+Otherwise, the checker does not stop at `differs (-162)`. It has already
+listed the directory, so it spends the rest of that listing on telling you
+which cause you are looking at:
 
 ```
 why TrainDataset differs:
@@ -261,6 +267,50 @@ and treat every comparison against a published number as unusable; the
 candidate-vs-baseline comparison inside this repository remains valid,
 because both arms see the same frozen manifest, and that internal comparison
 is what C1/C2/C3 are written against.
+
+### If you hold out your own validation split
+
+The distributed archive ships no validation set, which is why the released
+`Train.py` ends up checkpointing on the test sets. If you split the 1450-image
+training pool yourself, put the held-out part in `dataset/ValidationDataset/`
+(`images/` and `masks/`, or `gts/` — both names are read) and everything below
+picks it up:
+
+* `prepare_data.py --check` counts it, and reconciles the partition rather than
+  reporting the training half as short:
+
+  ```
+  TrainDataset                         1288      1450  re-split (-162)
+  ValidationDataset                     162         -  held out by you
+  ...
+  note: TrainDataset (1288) + ValidationDataset (162) = 1450, the size of the
+  pool PraNet distributes as TrainDataset.
+  ```
+
+  If the two halves do **not** add up, that is a warning with the arithmetic
+  in it: images went missing in the split, or were duplicated into both halves.
+
+* `freeze_manifest.py` includes it automatically and says so. This matters
+  more than it sounds: the split that chooses which weights you report is the
+  one split that must be verifiable, and a manifest entry gives it a SHA-256
+  per file.
+
+* `configs/base.yaml` selects on it — `data.val_split: ValidationDataset`,
+  `run.select: val_dice` — and every ablation arm inherits that, so no two
+  arms are selected by different rules. The test splits are read once, after
+  training. With the stock archive and no validation directory, set
+  `data.val_split: null` and `run.select: last`.
+
+* The trainer refuses to start if a stem appears in both `TrainDataset` and
+  `ValidationDataset`. That is the cheap check; run `tools/hash_collisions.py`
+  for the real one, which compares pixels and catches the same frame saved
+  twice under two names.
+
+`data.val_frac` remains for datasets with no such directory: it carves the
+fold out of the training split at `data.val_seed`. Setting both is an error.
+Prefer the directory — a fold is reproducible only while the seed, the
+fraction *and* the ordering of the training split all hold still, whereas a
+directory is in the manifest.
 
 ### One quirk worth knowing
 

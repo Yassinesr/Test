@@ -87,3 +87,79 @@ class TestRoundTrip:
                             ["run.seed=3", "pot.tail.lam=0.9"])
         dump_config(c, tmp_path / "c.yaml")
         assert config_to_dict(load_config(tmp_path / "c.yaml")) == config_to_dict(c)
+
+
+class TestValidationSetGuards:
+    """Selection has one job: never see the test set, never see the training
+    set. Each guard below is a way of failing that while looking fine."""
+
+    def test_a_directory_and_a_fold_together_are_rejected(self):
+        cfg = Config()
+        cfg.data.val_split = "ValidationDataset"
+        cfg.data.val_frac = 0.1
+        with pytest.raises(ValueError, match="Pick one"):
+            cfg.validate()
+
+    def test_val_dice_without_any_validation_set_is_rejected(self):
+        cfg = Config()
+        cfg.run.select = "val_dice"
+        with pytest.raises(ValueError, match="needs a validation set"):
+            cfg.validate()
+
+    def test_val_dice_with_a_directory_is_accepted(self):
+        cfg = Config()
+        cfg.run.select = "val_dice"
+        cfg.data.val_split = "ValidationDataset"
+        cfg.validate()
+
+    def test_a_validation_split_that_is_also_a_test_split_is_rejected(self):
+        """Selection on the test set is the protocol violation this whole
+        project exists to avoid; renaming it does not make it legal."""
+        cfg = Config()
+        cfg.data.val_split = cfg.data.test_splits[0]
+        with pytest.raises(ValueError, match="wearing a different name"):
+            cfg.validate()
+
+    def test_a_validation_split_that_is_the_training_split_is_rejected(self):
+        cfg = Config()
+        cfg.data.val_split = cfg.data.train_split
+        with pytest.raises(ValueError, match="images it trained on"):
+            cfg.validate()
+
+    def test_the_shipped_base_selects_on_validation_not_test(self):
+        cfg = load_config(CONFIGS / "base.yaml")
+        assert cfg.run.select == "val_dice"
+        assert cfg.data.val_split == "ValidationDataset"
+        assert cfg.data.val_split not in cfg.data.test_splits
+
+    @pytest.mark.parametrize("name", sorted(p.name for p in CONFIGS.glob("a*.yaml")))
+    def test_no_ablation_arm_selects_differently_from_the_others(self, name):
+        """A comparison between arms selected by different rules measures the
+        rules as much as the method."""
+        base = load_config(CONFIGS / "base.yaml")
+        arm = load_config(CONFIGS / name)
+        assert (arm.run.select, arm.data.val_split, arm.data.val_frac) == (
+            base.run.select, base.data.val_split, base.data.val_frac)
+
+
+class TestClearingAnOptionalField:
+    """base.yaml sets data.val_split to a string, so `=null` has to clear it
+    rather than store the word."""
+
+    def test_null_clears_an_optional_string(self):
+        cfg = load_config(CONFIGS / "base.yaml")
+        assert cfg.data.val_split == "ValidationDataset"
+        apply_overrides(cfg, ["data.val_split=null", "run.select=last"])
+        assert cfg.data.val_split is None
+
+    def test_none_clears_it_too(self):
+        cfg = load_config(CONFIGS / "base.yaml")
+        apply_overrides(cfg, ["data.val_split=None", "run.select=last"])
+        assert cfg.data.val_split is None
+
+    def test_a_required_string_is_left_alone(self):
+        """run.name is not Optional, so the word stays a word rather than
+        silently becoming a None that breaks a path join later."""
+        cfg = load_config(CONFIGS / "base.yaml")
+        apply_overrides(cfg, ["run.name=null"])
+        assert cfg.run.name == "null"

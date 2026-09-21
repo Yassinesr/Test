@@ -35,11 +35,18 @@ class DataConfig:
     verify: str = "exists"
     """off | exists | hash.  ``hash`` re-verifies every SHA-256 before training
     (~1 min for 2248 files) and is what a reportable run should use."""
+    val_split: Optional[str] = None
+    """A held-out directory to select on, e.g. ``ValidationDataset``.  This is
+    the preferred form: the split is a directory on disk, frozen into the
+    manifest and hashed like any other, so which images selected the
+    checkpoint is recoverable from the run's manifest alone rather than from a
+    seed and a fraction.  Mutually exclusive with ``val_frac``."""
     val_frac: float = 0.0
-    """Fraction of the *training* split held out for model/lambda selection.
-    0 disables it.  Selection on the test sets -- which the released
-    ``Train.py`` does, checkpointing on test mDice every epoch -- is a
-    protocol violation and is deliberately not implementable here."""
+    """Fraction of the *training* split held out for model/lambda selection,
+    when no ``val_split`` directory exists.  0 disables it.  Selection on the
+    test sets -- which the released ``Train.py`` does, checkpointing on test
+    mDice every epoch -- is a protocol violation and is deliberately not
+    implementable here."""
     val_seed: int = 12345
 
 
@@ -116,7 +123,8 @@ class RunConfig:
     log_every: int = 20
     save_every: int = 0
     select: str = "last"
-    """last | val_dice.  ``val_dice`` requires ``data.val_frac > 0``."""
+    """last | val_dice.  ``val_dice`` requires a validation set -- either
+    ``data.val_split`` or ``data.val_frac > 0``."""
     notes: str = ""
 
 
@@ -130,8 +138,29 @@ class Config:
     run: RunConfig = field(default_factory=RunConfig)
 
     def validate(self) -> None:
-        if self.run.select == "val_dice" and self.data.val_frac <= 0:
-            raise ValueError("run.select='val_dice' requires data.val_frac > 0")
+        if self.data.val_split and self.data.val_frac > 0:
+            raise ValueError(
+                f"data.val_split={self.data.val_split!r} and data.val_frac="
+                f"{self.data.val_frac} are both set. Pick one: a held-out directory, "
+                "or a fold carved out of the training split. Doing both would select on "
+                "one set and silently shrink the training set by another."
+            )
+        if self.run.select == "val_dice" and not (self.data.val_split or self.data.val_frac > 0):
+            raise ValueError(
+                "run.select='val_dice' needs a validation set: set data.val_split to a "
+                "held-out directory (e.g. ValidationDataset) or data.val_frac > 0. "
+                "Selecting on the test splits is not implementable here by design."
+            )
+        if self.data.val_split and self.data.val_split in self.data.test_splits:
+            raise ValueError(
+                f"data.val_split={self.data.val_split!r} is also in data.test_splits. "
+                "That is selection on the test set wearing a different name."
+            )
+        if self.data.val_split == self.data.train_split:
+            raise ValueError(
+                f"data.val_split and data.train_split are both {self.data.val_split!r}: "
+                "the model would be selected on the images it trained on."
+            )
         if self.data.verify not in ("off", "exists", "hash"):
             raise ValueError(f"data.verify must be off|exists|hash, got {self.data.verify!r}")
         if self.optim.amp not in ("off", "fp16", "bf16"):
@@ -189,6 +218,20 @@ def _deep_merge(a: dict, b: dict) -> dict:
     return out
 
 
+def _is_optional(node: Any, leaf: str) -> bool:
+    """Is ``node.leaf`` declared ``Optional[...]``?
+
+    ``from __future__ import annotations`` makes every annotation a string, so
+    this reads the text rather than the type. That is enough to answer the one
+    question it is asked: may this field be set back to None from the command
+    line?
+    """
+    for f in fields(node):
+        if f.name == leaf:
+            return "Optional" in str(f.type) or "None" in str(f.type)
+    return False
+
+
 def _coerce(current: Any, text: str) -> Any:
     if isinstance(current, bool):
         low = text.strip().lower()
@@ -229,7 +272,13 @@ def apply_overrides(cfg: Config, overrides: Sequence[str]) -> Config:
         leaf = parts[-1]
         if not hasattr(node, leaf):
             raise KeyError(f"unknown config path {key!r} (no {leaf!r})")
-        setattr(node, leaf, _coerce(getattr(node, leaf), value))
+        if value.strip().lower() in ("none", "null") and _is_optional(node, leaf):
+            # Without this, clearing a field that currently holds a string --
+            # data.val_split=null, say -- stores the four characters "null"
+            # and the guard that should have fired never sees a None.
+            setattr(node, leaf, None)
+        else:
+            setattr(node, leaf, _coerce(getattr(node, leaf), value))
     cfg.validate()
     return cfg
 

@@ -17,8 +17,15 @@ documents each place where the released code and the paper disagree:
 * **Gradient clipping** is by value to +/-0.5, as released, not by norm.
 * **Model selection.**  The released ``Train.py`` evaluates the five test sets
   every epoch and checkpoints on the best test mDice.  That is selection on
-  the test set.  This trainer can only select on ``last`` or on a fold held
-  out of the *training* split.
+  the test set.  This trainer cannot express it: the only selection criteria
+  are ``last``, or validation Dice on data the model never trains on --
+  either a held-out directory (``data.val_split``, e.g. ``ValidationDataset``)
+  or a fold carved out of the training split (``data.val_frac``).  A
+  ``val_split`` is checked against the training split for shared stems before
+  the first epoch, because a partition that overlaps selects on what it
+  trained on while looking exactly like one that does not.  The test splits
+  are read once, after training ends; ``eval.every`` may sample them for
+  curves, and that number never reaches the checkpoint.
 
 Multi-scale training keeps the reference structure: each scale in
 ``optim.scales`` is a separate optimiser step over the same batch.
@@ -115,8 +122,29 @@ def train(cfg: Config) -> dict:
             raise FileNotFoundError(f"{len(missing)} manifest files missing, e.g. {missing[:3]}")
 
     all_items = items_for_split(manifest, cfg.data.train_split)
-    train_items, val_items = _split_train_val(all_items, cfg.data.val_frac, cfg.data.val_seed)
-    logger.info("train pairs: %d   held-out val pairs: %d", len(train_items), len(val_items))
+    if cfg.data.val_split:
+        if cfg.data.val_split not in manifest["splits"]:
+            raise KeyError(
+                f"data.val_split={cfg.data.val_split!r} is not in {cfg.data.manifest}. "
+                f"The manifest holds {sorted(manifest['splits'])}. Re-freeze it with that "
+                f"directory included: python tools/freeze_manifest.py --root "
+                f"{cfg.data.root} --out {cfg.data.manifest}"
+            )
+        train_items = list(all_items)
+        val_items = items_for_split(manifest, cfg.data.val_split)
+        overlap = {it.stem for it in train_items} & {it.stem for it in val_items}
+        if overlap:
+            raise ValueError(
+                f"{len(overlap)} stem(s) appear in both {cfg.data.train_split} and "
+                f"{cfg.data.val_split}, e.g. {sorted(overlap)[:4]}. Selection would be on "
+                "images the model trained on. Fix the split before running."
+            )
+        val_source = cfg.data.val_split
+    else:
+        train_items, val_items = _split_train_val(all_items, cfg.data.val_frac, cfg.data.val_seed)
+        val_source = f"{cfg.data.val_frac:.0%} of {cfg.data.train_split} at seed {cfg.data.val_seed}"
+    logger.info("train pairs: %d   val pairs: %d%s", len(train_items), len(val_items),
+                f"   (val from {val_source})" if val_items else "")
 
     train_ds = PolypTrainDataset(
         root, train_items, size=cfg.data.size, augment=cfg.data.augment,
@@ -325,7 +353,8 @@ def train(cfg: Config) -> dict:
         state = safe_torch_load(out_dir / "best.pth")
         model.load_state_dict(state["model"])
         logger.info("selected checkpoint from epoch %d (val dice %.4f)", state["epoch"], state["val_dice"])
-        selected = {"source": "val_dice", "epoch": state["epoch"], "val_dice": state["val_dice"]}
+        selected = {"source": "val_dice", "epoch": state["epoch"], "val_dice": state["val_dice"],
+                    "val_set": val_source, "val_pairs": len(val_items)}
     else:
         selected = {"source": "last", "epoch": cfg.optim.epochs}
 

@@ -366,3 +366,110 @@ class TestDuplicateStems:
         rep = check_layout(root, splits=["TestDataset/CVC-300"])
         assert rep.ok, rep.summary()
         assert rep.counts["TestDataset/CVC-300"] == 60
+
+
+class TestValidationSplit:
+    """A held-out ValidationDataset makes TrainDataset short on purpose. The
+    checker has to reconcile the partition instead of reporting the half."""
+
+    def _pool(self, monkeypatch, n):
+        """Shrink the expected pool so a test need not write 1450 images."""
+        monkeypatch.setitem(EXPECTED_COUNTS, "TrainDataset", n)
+
+    def test_it_is_counted_and_shown(self, tmp_path, monkeypatch):
+        self._pool(monkeypatch, 10)
+        root = build_named(tmp_path / "dataset", "TrainDataset",
+                           *[[f"{i}.png" for i in range(1, 8)]] * 2)
+        build_named(root, "ValidationDataset", *[[f"v{i}.png" for i in range(3)]] * 2)
+        rep = check_layout(root, splits=["TrainDataset", "ValidationDataset"])
+        assert rep.counts["ValidationDataset"] == 3
+        assert "held out by you" in rep.summary()
+
+    def test_a_partition_that_adds_up_is_not_a_mismatch(self, tmp_path, monkeypatch):
+        self._pool(monkeypatch, 10)
+        root = build_named(tmp_path / "dataset", "TrainDataset",
+                           *[[f"{i}.png" for i in range(1, 8)]] * 2)
+        build_named(root, "ValidationDataset", *[[f"v{i}.png" for i in range(3)]] * 2)
+        rep = check_layout(root)
+        assert "TrainDataset" not in rep.count_mismatches
+        assert "TrainDataset" not in rep.diagnostics
+        assert any("re-split of that pool" in n for n in rep.notes)
+
+    def test_a_partition_that_loses_images_is_a_warning(self, tmp_path, monkeypatch):
+        self._pool(monkeypatch, 10)
+        root = build_named(tmp_path / "dataset", "TrainDataset",
+                           *[[f"{i}.png" for i in range(1, 8)]] * 2)
+        build_named(root, "ValidationDataset", *[[f"v{i}.png" for i in range(2)]] * 2)
+        rep = check_layout(root)
+        assert any("1 unaccounted for" in w for w in rep.warnings)
+
+    def test_a_partition_with_too_many_is_a_warning(self, tmp_path, monkeypatch):
+        """Both halves growing past the pool means images were duplicated
+        into it, which is the failure that quietly selects on training data."""
+        self._pool(monkeypatch, 10)
+        root = build_named(tmp_path / "dataset", "TrainDataset",
+                           *[[f"{i}.png" for i in range(1, 9)]] * 2)
+        build_named(root, "ValidationDataset", *[[f"v{i}.png" for i in range(4)]] * 2)
+        rep = check_layout(root)
+        assert any("more than the pool has" in w for w in rep.warnings)
+
+    def test_it_is_only_checked_when_it_exists(self, tmp_path):
+        """The distributed archive ships no validation split; its absence must
+        not become a sixth thing to explain."""
+        rep = check_layout(build(tmp_path / "dataset", ALL))
+        assert "ValidationDataset" not in rep.counts
+        assert not any("ValidationDataset" in e for e in rep.errors)
+
+
+
+    def test_the_table_and_the_note_agree(self, tmp_path, monkeypatch):
+        """A status of `differs` beside a note explaining that it does not is
+        worse than either line on its own."""
+        self._pool(monkeypatch, 10)
+        root = build_named(tmp_path / "dataset", "TrainDataset",
+                           *[[f"{i}.png" for i in range(1, 8)]] * 2)
+        build_named(root, "ValidationDataset", *[[f"v{i}.png" for i in range(3)]] * 2)
+        rep = check_layout(root, splits=["TrainDataset", "ValidationDataset"])
+        text = rep.summary()
+        assert "re-split (-3)" in text
+        assert "differs" not in text
+        assert rep.partition_ok
+        assert "is a re-split of the PraNet/Polyp-PVT distribution" in text
+
+
+
+class TestMaskDirectoryNames:
+    """A hand-assembled split often stores ground truth under gts/ rather than
+    masks/. Reading it is fine; not knowing which one you read is not."""
+
+    def test_gts_is_accepted_with_a_note(self, tmp_path):
+        names = [f"{i}.png" for i in range(1, 61)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        split = root / "TestDataset/CVC-300"
+        (split / "masks").rename(split / "gts")
+        rep = check_layout(root, splits=["TestDataset/CVC-300"])
+        assert rep.ok, rep.summary()
+        assert rep.counts["TestDataset/CVC-300"] == 60
+        assert any("gts/ rather than masks/" in n for n in rep.notes)
+
+    def test_both_with_the_same_stems_reads_masks_and_says_so(self, tmp_path):
+        names = [f"{i}.png" for i in range(1, 61)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        gts = root / "TestDataset/CVC-300/gts"
+        gts.mkdir()
+        for n in names:
+            Image.new("L", (32, 24), 0).save(gts / n)
+        rep = check_layout(root, splits=["TestDataset/CVC-300"])
+        assert rep.ok, rep.summary()
+        assert any("Reading masks/" in n for n in rep.notes)
+
+    def test_both_disagreeing_is_an_error_not_a_guess(self, tmp_path):
+        names = [f"{i}.png" for i in range(1, 61)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        gts = root / "TestDataset/CVC-300/gts"
+        gts.mkdir()
+        for n in names[:50]:
+            Image.new("L", (32, 24), 0).save(gts / n)
+        rep = check_layout(root, splits=["TestDataset/CVC-300"])
+        assert not rep.ok
+        assert any("cannot say which one produced it" in e for e in rep.errors)

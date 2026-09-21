@@ -46,7 +46,14 @@ def make_pair(rng: np.random.Generator, h: int, w: int, hard: bool):
     return img, (mask.astype(np.uint8) * 255)
 
 
-def write_split(out: Path, split: str, n: int, seed: int, hard_frac: float, size: tuple[int, int]):
+def write_split(out: Path, split: str, n: int, seed: int, hard_frac: float,
+                size: tuple[int, int], prefix: str = ""):
+    """Write one split. ``prefix`` keeps stems distinct across splits.
+
+    Without it every split numbers from 0000, and a training and a validation
+    image with the same stem look to the trainer exactly like the same image
+    held out -- which it refuses to run on, correctly.
+    """
     rng = np.random.default_rng(seed)
     (out / split / "images").mkdir(parents=True, exist_ok=True)
     (out / split / "masks").mkdir(parents=True, exist_ok=True)
@@ -55,25 +62,32 @@ def write_split(out: Path, split: str, n: int, seed: int, hard_frac: float, size
         h = size[0] + int(rng.integers(0, 17))
         w = size[1] + int(rng.integers(0, 17))
         img, msk = make_pair(rng, h, w, hard)
-        Image.fromarray(img).save(out / split / "images" / f"{i:04d}.png")
-        Image.fromarray(msk).save(out / split / "masks" / f"{i:04d}.png")
+        Image.fromarray(img).save(out / split / "images" / f"{prefix}{i:04d}.png")
+        Image.fromarray(msk).save(out / split / "masks" / f"{prefix}{i:04d}.png")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path, default=Path("./_smoke_data"))
     ap.add_argument("--n-train", type=int, default=48)
+    ap.add_argument("--n-val", type=int, default=12,
+                    help="held-out validation pairs; the smoke run selects its "
+                         "checkpoint on these, exercising the same path a real run uses")
     ap.add_argument("--n-test", type=int, default=16)
     ap.add_argument("--hard-frac", type=float, default=0.25)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
     write_split(args.out, "TrainDataset", args.n_train, args.seed, args.hard_frac, (80, 96))
-    write_split(args.out, "TestDataset/Fake", args.n_test, args.seed + 1, args.hard_frac, (72, 88))
-    splits = ["TrainDataset", "TestDataset/Fake"]
+    write_split(args.out, "ValidationDataset", args.n_val, args.seed + 2, args.hard_frac,
+                (80, 96), prefix="val")
+    write_split(args.out, "TestDataset/Fake", args.n_test, args.seed + 1, args.hard_frac,
+                (72, 88), prefix="test")
+    splits = ["TrainDataset", "ValidationDataset", "TestDataset/Fake"]
     manifest = build_manifest(args.out, splits)
     write_manifest(manifest, args.out / "manifest.json", args.out / "manifest.sha256")
-    print(f"wrote {args.n_train} train and {args.n_test} test pairs under {args.out}")
+    print(f"wrote {args.n_train} train, {args.n_val} validation and {args.n_test} test "
+          f"pairs under {args.out}")
     return 0
 
 

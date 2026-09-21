@@ -7,7 +7,13 @@
 # Two deviations from the released code, both deliberate and both documented
 # in docs/PROTOCOL.md:
 #   * epochs 100, not the 99 that `range(1, opt.epoch)` actually runs;
-#   * no checkpoint selection on the test sets (run.select: last).
+#   * the checkpoint is selected on a held-out validation split, never on the
+#     test sets.  The released Train.py evaluates all five test sets every
+#     epoch and keeps the best test mDice, which is selection on the test set;
+#     this cannot be expressed here.  With the stock PraNet archive, which
+#     ships no validation split, set `data.val_split: null` and
+#     `run.select: last` -- the test sets are then touched exactly once, at the
+#     end of training.
 #
 # The learning rate is constant: the released Train.py calls
 # adjust_lr(..., 0.1, 200) with 100 epochs, so its advertised 50-epoch decay
@@ -28,6 +34,13 @@ data:
   mask_interpolation: bilinear
   num_workers: 4
   verify: hash
+
+  # Model selection.  `val_split` is a directory held out of the training
+  # pool; it is frozen into the manifest and hashed like any other split, so
+  # which images chose the checkpoint is recoverable from the manifest alone.
+  # `val_frac` is the fallback when no such directory exists -- it carves the
+  # fold out of TrainDataset at `val_seed`.  Setting both is an error.
+  val_split: ValidationDataset
   val_frac: 0.0
   val_seed: 12345
 
@@ -76,5 +89,5 @@ run:
   deterministic: false
   log_every: 20
   save_every: 0
-  select: last
+  select: val_dice          # last | val_dice.  Never the test splits.
   notes: ""

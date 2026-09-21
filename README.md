@@ -108,7 +108,7 @@ needing **no network at all** are in
 ## 2. Verify the install — no data, no GPU, under a minute
 
 ```bash
-pytest -q                                          # 319 passed, ~25 s
+pytest -q                                          # 349 passed, ~25 s
 python tools/make_smoke_data.py --out ./_smoke_data
 python tools/train.py --config configs/smoke.yaml  # full pipeline on synthetic data
 ```
@@ -157,6 +157,20 @@ TestDataset/CVC-ClinicDB               62        62  ok
 TestDataset/CVC-ColonDB               380       380  ok
 TestDataset/CVC-300                    60        60  ok
 TestDataset/ETIS-LaribPolypDB         196       196  ok
+```
+
+If you hold your own validation split out of the 1450-image training pool, put
+it in `dataset/ValidationDataset/` (`images/` and `masks/`, or `gts/`). The
+checker then reconciles the partition instead of calling the training half
+short, `freeze_manifest.py` hashes it with everything else, and
+`configs/base.yaml` selects the checkpoint on it. With the stock archive,
+which ships no validation set, set `data.val_split: null` and
+`run.select: last`. See the RUNBOOK section "If you hold out your own
+validation split".
+
+```
+TrainDataset                         1288      1450  re-split (-162)
+ValidationDataset                     162         -  held out by you
 ```
 
 ## 4. Freeze the data and publish the duplicate audit
@@ -352,7 +366,7 @@ tools/                 doctor, prepare_data, freeze_manifest, verify_manifest,
                        hash_collisions, check_memory, train, evaluate,
                        run_ablation, analyze, make_smoke_data
 configs/               base + A0/A1/A2/A3/A5/A6/A7 + sweeps + a CPU smoke config
-tests/                 319 tests, CPU only
+tests/                 349 tests, CPU only
 docs/                  RUNBOOK, PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE,
                        REPRODUCIBILITY
 environment.yml        conda (GPU): conda-forge + torch 2.0.1+cu117 via pip
@@ -381,7 +395,7 @@ CUDA 11.4.
 # What is verified, and what is not
 
 Verified by running it, on CPU, against synthetic data shaped like the PraNet
-distribution: the 319 tests; the smoke run; `prepare_data --link/--check`;
+distribution: the 349 tests; the smoke run; `prepare_data --link/--check`;
 `freeze_manifest`; `verify_manifest` against both a symlink and the real path;
 `hash_collisions`; a 3-arm × 3-seed `run_ablation`; `evaluate --compare`; and
 `analyze` including the verdict. Under both NumPy majors.

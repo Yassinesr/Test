@@ -92,15 +92,21 @@ mining — and that is a publishable negative result, not a failed experiment.
 ## 4. A4 — sensitivity, on a training-split fold
 
 See `configs/sweeps/README.md`. `λ ∈ {0.1, 0.3, 1.0}` and
-`p ∈ {0.05, 0.15, 0.30}`, selected on `data.val_frac: 0.1` with
-`run.select: val_dice`, never on the test sets. `α` stays fixed at 0.02: it
+`p ∈ {0.05, 0.15, 0.30}`, selected on the held-out `data.val_split`
+(`ValidationDataset`) with `run.select: val_dice`, never on the test sets. If
+your dataset has no such directory, `data.val_frac: 0.1` carves the fold out
+of the training split instead. `α` stays fixed at 0.02: it
 sets how far past the data the GPD extrapolates, so sweeping it would confound
 "the method works" with "this extrapolation distance suits this dataset", and
 it is the one number A2 is defined against.
 
-Re-run the chosen setting with `val_frac: 0.0` and `select: last` for the
-reported table, so the reported run uses all 1450 training images exactly like
-the baseline.
+No re-run is needed for the reported table as long as the baseline selects
+the same way — with a standing `val_split`, every arm trains on the whole
+training split and selects on the same held-out directory, so the sweep's
+winner is already comparable to A0. (With `val_frac` it is not: the fold comes
+out of training, so a swept arm sees fewer images than the baseline. In that
+case re-run the chosen setting with `val_frac: 0.0` and `select: last`, and
+run A0 that way too.)
 
 ## 5. A5 — equal compute
 

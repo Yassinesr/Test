@@ -140,7 +140,23 @@ affect whether a "reproduction" lands within ±0.5 mDice:
 4. **Model selection.** The released `Train.py` evaluates all five test sets
    every epoch and checkpoints on the best test mDice. That is selection on
    the test set. It is not implementable here: `run.select` accepts `last`, or
-   `val_dice` against a fold held out of the **training** split.
+   `val_dice` against data the model never trains on — either a held-out
+   directory (`data.val_split`, e.g. `ValidationDataset`) or a fold carved out
+   of the training split at a seed (`data.val_frac`).
+
+   Prefer the directory. A fold is reproducible only as long as the seed, the
+   fraction and the ordering of the training split all stay fixed; a directory
+   is frozen into the manifest with a SHA-256 per file, so which images chose
+   the checkpoint is recoverable from the run's own artefacts. The trainer
+   refuses a `val_split` that shares a stem with the training split, and
+   `tools/hash_collisions.py` is the stronger check — it compares pixels, so
+   it catches the same image saved twice under different names.
+
+   Whichever you use, **every arm must use the same one**. A0 selected at the
+   last epoch and A1 selected on best validation Dice differ by the selection
+   rule as much as by the tail term, and the ablation would not separate them.
+   `configs/base.yaml` sets it once and every arm inherits it; a test asserts
+   the arms agree.
 5. **The selection set does not exist.** That same checkpointing call is
    `test(model, test_path, 'test')` — i.e. `./dataset/TestDataset/test/`, a
    directory the distributed archive does not contain. The released training

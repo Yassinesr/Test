@@ -178,6 +178,55 @@ def _diagnose_count(split: str, expected: int, paired: list,
     return out
 
 
+
+#: A validation split is not part of the distributed archive -- it exists only
+#: when you have re-split the training pool yourself -- so it has no expected
+#: count and is checked as a partition instead. See ``_check_partition``.
+VALIDATION_SPLIT = "ValidationDataset"
+
+#: Directory names a mask folder travels under. ``masks`` is what the
+#: reference code reads; ``gts`` is what several polyp repositories ship and
+#: what a hand-assembled split often ends up with.
+MASK_DIR_NAMES = ("masks", "gts")
+
+
+class AmbiguousMaskDir(Exception):
+    """``masks/`` and ``gts/`` both exist and hold different things."""
+
+
+def resolve_mask_dir(base: Path) -> tuple:
+    """Return ``(directory, note)`` for a split's ground truth.
+
+    Raises ``AmbiguousMaskDir`` when both names exist and disagree: with two
+    candidate ground truths and no way to tell which one a number came from,
+    guessing is worse than stopping.
+    """
+    present = [base / n for n in MASK_DIR_NAMES if (base / n).is_dir()]
+    if not present:
+        return None, None
+    if len(present) == 1:
+        d = present[0]
+        note = None if d.name == "masks" else (
+            f"{base.name}/ stores ground truth in {d.name}/ rather than masks/. Read here; "
+            f"the reference code hard-codes masks/, so rename or symlink it before running "
+            f"the original scripts.")
+        return d, note
+    masks, gts = base / "masks", base / "gts"
+    m_stems = {f.stem for f in _files(masks)}
+    g_stems = {f.stem for f in _files(gts)}
+    if m_stems != g_stems:
+        only_m, only_g = sorted(m_stems - g_stems), sorted(g_stems - m_stems)
+        raise AmbiguousMaskDir(
+            f"{base.name}/ has both masks/ ({len(m_stems)}) and gts/ ({len(g_stems)}), and they "
+            f"hold different stems -- masks/ only: {only_m[:3]} ({len(only_m)}), gts/ only: "
+            f"{only_g[:3]} ({len(only_g)}). Two candidate ground truths means a reported number "
+            f"cannot say which one produced it. Delete or rename one.")
+    return masks, (
+        f"{base.name}/ has both masks/ and gts/ with the same {len(m_stems)} stems. Reading "
+        f"masks/; gts/ is ignored. They are compared by name only -- if you edited one, "
+        f"freeze_manifest will hash whichever this reads, so remove the copy you do not want.")
+
+
 @dataclass
 class LayoutReport:
     root: Path
@@ -192,6 +241,10 @@ class LayoutReport:
     """Splits whose pair count differs from the distributed archive. Collected
     rather than warned per-split: six near-identical warnings bury the one
     error that actually needs acting on."""
+    partition_ok: bool = False
+    """True when a held-out validation split accounts for a short training
+    split exactly. The table and the closing line both have to know: a status
+    of ``differs`` beside a note saying it does not is worse than either."""
     diagnostics: dict = field(default_factory=dict)
     """split -> lines explaining a count difference. Populated only for the
     splits in ``count_mismatches``; the explanation costs a directory listing
@@ -211,8 +264,13 @@ class LayoutReport:
                     lines.append(f"{split:<34} {'-':>6}  {expected:>8}  MISSING")
                 elif n == expected:
                     lines.append(f"{split:<34} {n:>6}  {expected:>8}  ok")
+                elif self.partition_ok and split == "TrainDataset":
+                    lines.append(f"{split:<34} {n:>6}  {expected:>8}  re-split ({n - expected:+d})")
                 else:
                     lines.append(f"{split:<34} {n:>6}  {expected:>8}  differs ({n - expected:+d})")
+            for split, n in self.counts.items():
+                if split not in EXPECTED_COUNTS:
+                    lines.append(f"{split:<34} {n:>6}  {'-':>8}  held out by you")
             lines.append("")
         for label, items in (("ERROR", self.errors), ("WARNING", self.warnings), ("note", self.notes)):
             for item in items:
@@ -224,8 +282,11 @@ class LayoutReport:
                 lines.append(f"  - {line}")
         if self.ok and not self.warnings:
             lines.append("")
-            lines.append("Layout matches the PraNet/Polyp-PVT distribution. "
-                         "Next: python tools/freeze_manifest.py")
+            lines.append(
+                ("Layout is a re-split of the PraNet/Polyp-PVT distribution and the parts "
+                 "add up. " if self.partition_ok else
+                 "Layout matches the PraNet/Polyp-PVT distribution. ")
+                + "Next: python tools/freeze_manifest.py")
         elif self.ok:
             lines.append("")
             lines.append("Usable, with the warnings above. Read them before reporting any number.")
@@ -244,9 +305,16 @@ def _check_split(root: Path, split: str, rep: LayoutReport) -> None:
         _suggest_alias(root, split, rep)
         return
 
-    img_dir, msk_dir = base / "images", base / "masks"
+    img_dir = base / "images"
+    try:
+        msk_dir, msk_note = resolve_mask_dir(base)
+    except AmbiguousMaskDir as exc:
+        rep.errors.append(f"{split}: {exc}")
+        return
+    if msk_note:
+        rep.notes.append(msk_note)
     for name, d in (("images", img_dir), ("masks", msk_dir)):
-        if not d.is_dir():
+        if d is None or not d.is_dir():
             nested = base / split.split("/")[-1]
             if nested.is_dir():
                 rep.errors.append(
@@ -350,6 +418,46 @@ def _suggest_alias(root: Path, split: str, rep: LayoutReport) -> None:
             )
 
 
+
+def _check_partition(rep: LayoutReport) -> None:
+    """Reconcile a re-split training pool against the distributed one.
+
+    Holding out a validation set means ``TrainDataset`` is *supposed* to be
+    short, so comparing it against 1450 on its own reports a problem that is
+    really a design decision. What is worth checking is the arithmetic: the
+    parts must still add up to the pool they came from, because a partition
+    that loses images loses them silently and one that duplicates them selects
+    on data it trained on.
+    """
+    train, val = rep.counts.get("TrainDataset"), rep.counts.get(VALIDATION_SPLIT)
+    if train is None or val is None:
+        return
+    pool = EXPECTED_COUNTS["TrainDataset"]
+    total = train + val
+    if total == pool:
+        if "TrainDataset" in rep.count_mismatches:
+            rep.count_mismatches.remove("TrainDataset")
+            rep.diagnostics.pop("TrainDataset", None)
+        rep.partition_ok = True
+        rep.notes.append(
+            f"TrainDataset ({train}) + {VALIDATION_SPLIT} ({val}) = {total}, the size of the "
+            f"pool PraNet distributes as TrainDataset. This is a re-split of that pool, not a "
+            f"short copy, so the count is not reported as a mismatch. Two things this does not "
+            f"check: that no image is in both halves -- tools/hash_collisions.py answers that "
+            f"from the frozen manifest, by pixels rather than by name -- and that the split is "
+            f"recorded somewhere a reader can reproduce."
+        )
+    else:
+        rep.warnings.append(
+            f"TrainDataset ({train}) + {VALIDATION_SPLIT} ({val}) = {total}, but the pool they "
+            f"come from holds {pool}: {abs(total - pool)} "
+            f"{'unaccounted for' if total < pool else 'more than the pool has'}. If you also "
+            f"carved a third part out, say so in run.notes and point at where it lives; if you "
+            f"did not, {abs(total - pool)} image(s) went missing in the split and the halves "
+            f"below are not the experiment you think you are running."
+        )
+
+
 def check_layout(root: Path, splits: Optional[list[str]] = None) -> LayoutReport:
     """Validate ``root`` against the distributed layout. Never writes anything."""
     root = Path(root)
@@ -359,8 +467,12 @@ def check_layout(root: Path, splits: Optional[list[str]] = None) -> LayoutReport
                           f"{root}/TrainDataset/images/ exists.")
         return rep
 
-    for split in (splits or list(EXPECTED_COUNTS)):
+    wanted = list(splits) if splits else list(EXPECTED_COUNTS)
+    if splits is None and (root / VALIDATION_SPLIT).is_dir():
+        wanted.append(VALIDATION_SPLIT)
+    for split in wanted:
         _check_split(root, split, rep)
+    _check_partition(rep)
 
     # The reference Train.py needs this and the archive does not ship it.
     if (root / "TestDataset" / "test").is_dir():
