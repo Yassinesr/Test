@@ -84,6 +84,27 @@ def main() -> int:
     print(rep.summary())
     print(f"\nwrote {args.out} and {csv_path}")
 
+    # The check this tool exists to make, for a dataset re-split by hand: a
+    # checkpoint chosen on images the model trained on is optimistic, and
+    # every number downstream of that checkpoint inherits it.
+    if "ValidationDataset" not in rep.splits:
+        print("\nNOTE: no ValidationDataset in this manifest, so the train -> validation")
+        print("leakage check did not run. If you hold a validation split out, re-freeze")
+        print("(tools/freeze_manifest.py picks it up automatically) and run this again.")
+    else:
+        leak = [p for p in rep.pairs
+                if {p["split_a"], p["split_b"]} == {"TrainDataset", "ValidationDataset"}]
+        exact_leak = [g for g in rep.exact_pixel_duplicates
+                      if {"TrainDataset", "ValidationDataset"} <=
+                      {m["split"] for m in g["members"]}]
+        if exact_leak or leak:
+            print(f"\n*** TrainDataset <-> ValidationDataset: {len(leak)} flagged pair(s), "
+                  f"{len(exact_leak)} byte-identical. ***")
+            print("The checkpoint would be selected on images the model trained on. Fix the")
+            print("partition before running; this one blocks the run, not just the claims.")
+        else:
+            print("\nTrainDataset <-> ValidationDataset: clean. Selection is on held-out data.")
+
     cross = [p for p in rep.pairs if p["split_a"] != p["split_b"]]
     if cross:
         print(f"\n*** {len(cross)} cross-split near-duplicate pairs found. ***")

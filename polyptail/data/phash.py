@@ -128,7 +128,9 @@ class CollisionReport:
             "splits": self.splits, "counts": self.counts, "matrix": self.matrix,
             "n_flagged_pairs": len(self.pairs), "pairs": self.pairs,
             "exact_pixel_duplicates": self.exact_pixel_duplicates,
+            "exact_duplicates_by_location": self.exact_duplicates_by_location(),
             "nearest_neighbour_stats": self.nn_stats, "closest_pairs": self.closest,
+            "findings": self.findings(),
         }
 
     def summary(self) -> str:
@@ -152,7 +154,73 @@ class CollisionReport:
         lines.append("")
         lines.append(f"total flagged near-duplicate pairs: {len(self.pairs)}")
         lines.append(f"exact decoded-pixel duplicates:     {len(self.exact_pixel_duplicates)}")
+        found = self.findings()
+        if found:
+            lines.append("")
+            lines.append("Findings (threshold-free evidence only):")
+            lines.extend(f"  * {f}" for f in found)
         return "\n".join(lines)
+
+    def exact_duplicates_by_location(self) -> dict:
+        """``{"within A": n, "A <-> B": n}`` for the decoded-pixel collisions.
+
+        A count on its own is not actionable: 76 duplicates inside one split
+        and 76 spanning train and test are different findings with different
+        consequences, and the number is identical.
+        """
+        loc: dict = {}
+        for group in self.exact_pixel_duplicates:
+            splits = sorted({m["split"] for m in group["members"]})
+            key = f"within {splits[0]}" if len(splits) == 1 else " <-> ".join(splits)
+            loc[key] = loc.get(key, 0) + 1
+        return dict(sorted(loc.items(), key=lambda kv: -kv[1]))
+
+    def findings(self) -> list[str]:
+        """Statements to act on, derived only from evidence without a threshold.
+
+        The flag matrix depends on three cut-offs chosen by hand, and
+        colonoscopy frames collide more than natural images do, so it screens
+        rather than concludes.  A median nearest-neighbour distance and a
+        decoded-pixel SHA-256 collision do not depend on any cut-off: the first
+        is a property of the two sets, the second is not a similarity judgement
+        at all.
+        """
+        out: list[str] = []
+        for key, n in self.exact_duplicates_by_location().items():
+            if key.startswith("within "):
+                split = key[len("within "):]
+                out.append(
+                    f"{n} group(s) of byte-identical decoded images {key}. The split is "
+                    f"smaller than its count: {split} has fewer distinct images than pairs.")
+            else:
+                out.append(
+                    f"{n} group(s) of byte-identical decoded images span {key}. These are the "
+                    f"same picture, not a similarity call -- no threshold argument applies.")
+
+        for a in self.splits:
+            for b in self.splits:
+                if a == b:
+                    continue
+                st = self.nn_stats.get(a, {}).get(b, {})
+                med = st.get("phash_median")
+                if med is None or med != med:
+                    continue
+                n_a = self.counts.get(a, 0)
+                near = st.get("phash", {}).get("n_le_2")
+                if med <= 2.0:
+                    out.append(
+                        f"{a} -> {b}: median nearest-neighbour pHash distance {med:.1f}. At "
+                        f"least half of {a} has a near-exact twin in {b}"
+                        + (f" ({near} of {n_a} within 2 bits)" if near is not None else "")
+                        + f". Treat {a} as a subset of {b}, not as an independent set: a "
+                          f"pooled average over both counts those images twice.")
+                elif med <= 10.0:
+                    out.append(
+                        f"{a} -> {b}: median nearest-neighbour pHash distance {med:.1f}, "
+                        f"against ~32 for independent sets"
+                        + (f" ({near} of {n_a} within 2 bits)" if near is not None else "")
+                        + f". Substantial overlap; say so wherever a {a} number is reported.")
+        return out
 
 
 def _nn_summary(d: np.ndarray, axis: int) -> dict:

@@ -89,15 +89,34 @@ Three things come out, in increasing order of how much they license:
    overlapping pair of splits shows a spike of near-zero nearest-neighbour
    distances that no threshold choice can hide; a disjoint pair is unimodal
    near 32, the expectation for independent 64-bit hashes.
-3. **Exact decoded-pixel duplicates** — admit no interpretation at all.
+3. **Exact decoded-pixel duplicates** — admit no interpretation at all. They
+   are reported by location (`within A`, `A <-> B`), because 76 duplicates
+   inside one split and 76 spanning train and test are different findings with
+   the same count.
+
+The tool ends with a **Findings** block written only from (2) and (3), never
+from (1), so nothing in it turns on a threshold someone chose.
 
 Act on the result:
 
 * **CVC-300 ∩ CVC-ColonDB non-empty** → report CVC-300 and
   CVC-ColonDB-minus-CVC-300 separately, and do not quote a pooled external
-  average.
+  average. A median nearest-neighbour distance near 0 in one direction only
+  means containment, not mutual overlap: the smaller set is the one to stop
+  treating as independent.
 * **TrainDataset ∩ any test split non-empty** → that test set's numbers are
-  contaminated. Say so in the table, in the caption, every time.
+  contaminated. Say so in the table, in the caption, every time. Note this is
+  expected for CVC-ClinicDB: its 612 frames come from video sequences and the
+  PraNet split cuts them 550/62 *by frame*, so adjacent frames of one sequence
+  land on both sides. That is a property of the published protocol, inherited
+  by every number measured under it, not a fault in your copy.
+* **TrainDataset ∩ ValidationDataset non-empty** → this one blocks the *run*,
+  not just the claims: the checkpoint would be chosen on images the model
+  trained on. Fix the partition and re-split.
+* **A split with duplicates inside it** → its effective size is smaller than
+  its count. This matters here beyond the usual: POT-TC fits a tail to the
+  per-image deficit pool, so an image present k times contributes k
+  exceedances and pulls the GPD fit toward its difficulty.
 * **Empty** → that is a publishable negative result. It is currently absent
   from the literature, and it is the precondition for calling the five test
   sets independent.
