@@ -35,6 +35,16 @@ class DataConfig:
     verify: str = "exists"
     """off | exists | hash.  ``hash`` re-verifies every SHA-256 before training
     (~1 min for 2248 files) and is what a reportable run should use."""
+    extra_train_splits: list[str] = field(default_factory=list)
+    """Splits folded into training alongside ``train_split``.
+
+    One use: the reproduction gate. If you re-split the distributed training
+    pool into train and validation halves, the published numbers were measured
+    on the *whole* pool, so a run meant to reproduce them has to train on both
+    -- ``extra_train_splits: [ValidationDataset]`` with ``val_split: null`` and
+    ``run.select: last``. Without it the gate compares a 1288-image run against
+    a 1450-image number and cannot tell a harness fault from a smaller
+    training set."""
     val_split: Optional[str] = None
     """A held-out directory to select on, e.g. ``ValidationDataset``.  This is
     the preferred form: the split is a directory on disk, frozen into the
@@ -151,6 +161,21 @@ class Config:
                 "held-out directory (e.g. ValidationDataset) or data.val_frac > 0. "
                 "Selecting on the test splits is not implementable here by design."
             )
+        overlap = set(self.data.extra_train_splits) & set(self.data.test_splits)
+        if overlap:
+            raise ValueError(
+                f"data.extra_train_splits contains test split(s) {sorted(overlap)}. "
+                "That is training on the test set.")
+        if self.data.train_split in self.data.extra_train_splits:
+            raise ValueError(
+                f"data.train_split={self.data.train_split!r} is also in "
+                "data.extra_train_splits, so every image in it would be loaded twice.")
+        if self.data.val_split and self.data.val_split in self.data.extra_train_splits:
+            raise ValueError(
+                f"data.val_split={self.data.val_split!r} is also in "
+                "data.extra_train_splits: the model would be selected on images it "
+                "trained on. For the reproduction gate set run.select=last and "
+                "data.val_split=null.")
         if self.data.val_split and self.data.val_split in self.data.test_splits:
             raise ValueError(
                 f"data.val_split={self.data.val_split!r} is also in data.test_splits. "

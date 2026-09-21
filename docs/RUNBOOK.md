@@ -88,7 +88,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `355 passed` in about a minute. These are CPU-only and need no data.
+Expect `361 passed` in well under a minute. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -503,6 +503,25 @@ PY
 the brief shows the cross-paper noise floor is already 0.3-0.8 mDice, so a
 harness that is a point off is producing differences larger than anything
 POT-TC could plausibly add. Outside the band you are measuring the harness.
+
+**On a re-split training pool, point this script at a gate run, not at the
+ablation.** The targets above were measured on all 1450 images with the
+checkpoint taken at the last epoch. Training on your 1288 and selecting on
+validation is a different experiment, so a miss would be uninterpretable — the
+one thing the gate exists to rule out is a harness fault, and it cannot do that
+while two things differ at once. Run it once on the whole pool:
+
+```bash
+python tools/run_ablation.py --configs configs/a0_baseline.yaml --seeds 0 \
+    --out-dir runs/gate \
+    data.extra_train_splits='["ValidationDataset"]' \
+    data.val_split=null run.select=last
+```
+
+then read `runs/gate/a0_baseline/seed0/results.json` with the script above. A
+pass licenses comparison against published numbers; it does not make your
+1288-image runs comparable to them, and nothing will. Those stand on the
+internal A0-vs-A1 comparison, where both arms read the same manifest.
 
 Note it compares `dice_sweep`, not `dice`. The published numbers are averaged
 over 256 thresholds; `dice` is the fixed-0.5 operating point. They are

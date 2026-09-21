@@ -246,3 +246,23 @@ class TestHeldOutValidationDirectory:
         })
         with pytest.raises(KeyError, match="freeze_manifest"):
             train(cfg)
+
+
+def test_folding_the_validation_split_back_in_trains_on_everything(
+        synthetic_dataset, tmp_path):
+    """The reproduction gate: 12 training + 5 validation images, all trained
+    on, nothing held out, checkpoint taken at the last epoch."""
+    cfg = smoke_cfg(synthetic_dataset, tmp_path, **{
+        "run.name": "gate", "data.extra_train_splits": '["ValidationDataset"]',
+        "data.val_split": "null", "run.select": "last",
+        "pot.tail.mode": "gpd", "pot.tail.buffer_size": 48,
+        "pot.tail.min_buffer": 12, "pot.tail.min_exceedances": 4,
+    })
+    train(cfg)
+    rows = (tmp_path / "runs" / "gate" / "per_image_deficits.csv"
+            ).read_text().strip().split("\n")[1:]
+    stems = {r.split(",")[2] for r in rows}
+    assert len(stems) == 17, "12 training + 5 validation images"
+    assert sum(s.startswith("v") for s in stems) == 5
+    blob = json.loads((tmp_path / "runs" / "gate" / "results.json").read_text())
+    assert blob["selected"]["source"] == "last"

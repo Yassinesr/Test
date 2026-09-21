@@ -108,7 +108,7 @@ needing **no network at all** are in
 ## 2. Verify the install — no data, no GPU, under a minute
 
 ```bash
-pytest -q                                          # 355 passed, ~60 s
+pytest -q                                          # 361 passed, ~40 s
 python tools/make_smoke_data.py --out ./_smoke_data
 python tools/train.py --config configs/smoke.yaml  # full pipeline on synthetic data
 ```
@@ -214,6 +214,25 @@ Sequential on purpose: two runs do not fit on 12 GB, and interleaving destroys
 the wall-clock measurement A5 needs. The runner skips any `(config, seed)` that
 already has a `results.json`, so an interrupted sweep resumes by re-running the
 same command. Use `tmux`.
+
+**If you re-split the training pool, this gate needs one extra run first.** The
+published numbers were measured on all 1450 images with the checkpoint taken at
+the last epoch. A 1288-image run selected on validation is a different
+experiment, so missing the band would not tell you whether your harness is
+wrong or your training set is smaller — and distinguishing those two is the
+only reason the gate exists:
+
+```bash
+python tools/run_ablation.py --configs configs/a0_baseline.yaml --seeds 0 \
+    --out-dir runs/gate \
+    data.extra_train_splits='["ValidationDataset"]' \
+    data.val_split=null run.select=last
+```
+
+One seed is enough: you are testing the harness, not estimating an effect.
+That run is what licenses any comparison against a published number. Every arm
+after it — A0 included — goes back to your train/validation split, where the
+comparison that matters is internal and both arms read the same manifest.
 
 Then check the band — **every split within ±0.5 mDice**, compared against
 `dice_sweep`, not `dice`, because the published numbers are threshold-averaged:
@@ -366,7 +385,7 @@ tools/                 doctor, prepare_data, freeze_manifest, verify_manifest,
                        hash_collisions, check_memory, train, evaluate,
                        run_ablation, analyze, make_smoke_data
 configs/               base + A0/A1/A2/A3/A5/A6/A7 + sweeps + a CPU smoke config
-tests/                 355 tests, CPU only
+tests/                 361 tests, CPU only
 docs/                  RUNBOOK, PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE,
                        REPRODUCIBILITY
 environment.yml        conda (GPU): conda-forge + torch 2.0.1+cu117 via pip
@@ -395,7 +414,7 @@ CUDA 11.4.
 # What is verified, and what is not
 
 Verified by running it, on CPU, against synthetic data shaped like the PraNet
-distribution: the 355 tests; the smoke run; `prepare_data --link/--check`;
+distribution: the 361 tests; the smoke run; `prepare_data --link/--check`;
 `freeze_manifest`; `verify_manifest` against both a symlink and the real path;
 `hash_collisions`; a 3-arm × 3-seed `run_ablation`; `evaluate --compare`; and
 `analyze` including the verdict. Under both NumPy majors.

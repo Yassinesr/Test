@@ -163,3 +163,40 @@ class TestClearingAnOptionalField:
         cfg = load_config(CONFIGS / "base.yaml")
         apply_overrides(cfg, ["run.name=null"])
         assert cfg.run.name == "null"
+
+
+class TestFoldingSplitsBackIntoTraining:
+    """The reproduction gate trains on the whole distributed pool, which on a
+    re-split dataset means putting the validation half back."""
+
+    def test_the_gate_shape_is_accepted(self):
+        cfg = Config()
+        cfg.data.extra_train_splits = ["ValidationDataset"]
+        cfg.data.val_split = None
+        cfg.run.select = "last"
+        cfg.validate()
+
+    def test_folding_in_a_test_split_is_rejected(self):
+        cfg = Config()
+        cfg.data.extra_train_splits = [cfg.data.test_splits[0]]
+        with pytest.raises(ValueError, match="training on the test set"):
+            cfg.validate()
+
+    def test_folding_in_the_training_split_itself_is_rejected(self):
+        cfg = Config()
+        cfg.data.extra_train_splits = [cfg.data.train_split]
+        with pytest.raises(ValueError, match="loaded twice"):
+            cfg.validate()
+
+    def test_training_on_the_split_you_select_on_is_rejected(self):
+        """The whole point of the validation split, undone in one line."""
+        cfg = Config()
+        cfg.data.val_split = "ValidationDataset"
+        cfg.data.extra_train_splits = ["ValidationDataset"]
+        cfg.run.select = "val_dice"
+        with pytest.raises(ValueError, match="selected on images it"):
+            cfg.validate()
+
+    def test_the_shipped_configs_fold_in_nothing(self):
+        for name in sorted(p.name for p in CONFIGS.glob("*.yaml")):
+            assert load_config(CONFIGS / name).data.extra_train_splits == [], name

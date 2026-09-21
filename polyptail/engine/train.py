@@ -122,6 +122,15 @@ def train(cfg: Config) -> dict:
             raise FileNotFoundError(f"{len(missing)} manifest files missing, e.g. {missing[:3]}")
 
     all_items = items_for_split(manifest, cfg.data.train_split)
+    for extra in cfg.data.extra_train_splits:
+        if extra not in manifest["splits"]:
+            raise KeyError(
+                f"data.extra_train_splits names {extra!r}, which is not in "
+                f"{cfg.data.manifest}. It holds {sorted(manifest['splits'])}."
+            )
+        all_items = all_items + items_for_split(manifest, extra)
+        logger.info("folded %s into training (%d pairs)", extra,
+                    len(items_for_split(manifest, extra)))
     if cfg.data.val_split:
         if cfg.data.val_split not in manifest["splits"]:
             raise KeyError(
