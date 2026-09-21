@@ -252,3 +252,117 @@ class TestExistingTestDirectory:
         from polyptail.eval.evaluator import DEFAULT_TEST_SPLITS
         assert "TestDataset/test" not in DEFAULT_TEST_SPLITS
         assert "TestDataset/test" not in EXPECTED_COUNTS
+
+
+def build_named(root, split, img_names, msk_names, size=(32, 24)):
+    """Create one split from explicit filenames, so a test can reproduce a
+    real-world shape -- a short corpus, a gap, a duplicated stem -- rather
+    than only the tidy case."""
+    for sub, names in (("images", img_names), ("masks", msk_names)):
+        d = root / split / sub
+        d.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            if sub == "images":
+                Image.new("RGB", size, (30, 40, 60)).save(d / name)
+            else:
+                Image.new("L", size, 0).save(d / name)
+    return root
+
+
+class TestCountDiagnosis:
+    """`differs (-162)` is a fact, not a diagnosis. A count that is off has
+    several causes with different fixes, and the checker has already listed
+    the directory, so it must say which one it is looking at."""
+
+    def _diag(self, root, split="TestDataset/CVC-300"):
+        rep = check_layout(root, splits=[split])
+        return "\n".join(rep.diagnostics.get(split, [])), rep
+
+    def test_a_symmetric_shortfall_rules_out_a_half_finished_copy(self, tmp_path):
+        names = [f"{i}.png" for i in range(1, 41)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        text, rep = self._diag(root)
+        assert "images/ 40, masks/ 40" in text
+        assert "orphans" in text
+        assert rep.ok, "a short split is a warning, not an error"
+
+    def test_a_contiguous_gap_is_reported_as_a_stopped_transfer(self, tmp_path):
+        names = [f"{i}.png" for i in list(range(1, 21)) + list(range(41, 61))]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        text, _ = self._diag(root)
+        assert "one contiguous block, 21-40" in text
+        assert "stopped early" in text
+
+    def test_scattered_gaps_are_reported_as_a_filter(self, tmp_path):
+        names = [f"{i}.png" for i in range(1, 61) if i % 5]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        text, _ = self._diag(root)
+        assert "scattered" in text
+        assert "filter" in text
+
+    def test_an_unbroken_sequence_that_stops_early_blames_the_tail(self, tmp_path):
+        """Nothing is missing from the middle: the numbering simply ends. That
+        is a source that was short, not a transfer that lost something."""
+        names = [f"{i}.png" for i in range(1, 41)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        text, _ = self._diag(root)
+        assert "1-40 unbroken" in text
+        assert "tail was never copied" in text
+
+    def test_two_name_shapes_identify_which_corpus_is_short(self, tmp_path):
+        """TrainDataset is two corpora that name their files differently, so
+        the shape histogram says which half to re-copy."""
+        kvasir = [f"cju{i:022d}.png" for i in range(900)]
+        clinic = [f"{i}.png" for i in range(1, 389)]
+        root = build_named(tmp_path / "dataset", "TrainDataset",
+                           kvasir + clinic, kvasir + clinic)
+        text, _ = self._diag(root, "TrainDataset")
+        assert "900 alphanumeric (= the Kvasir-SEG share exactly)" in text
+        assert "388 numeric" in text
+        assert "the group that is short is the one to re-copy" in text
+
+    def test_a_split_at_the_expected_count_gets_no_diagnosis(self, tmp_path):
+        names = [f"{i}.png" for i in range(1, 61)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        rep = check_layout(root, splits=["TestDataset/CVC-300"])
+        assert rep.counts["TestDataset/CVC-300"] == 60
+        assert rep.diagnostics == {}
+
+    def test_the_summary_prints_the_diagnosis(self, tmp_path):
+        build(tmp_path / "dataset", ALL)
+        text = check_layout(tmp_path / "dataset").summary()
+        assert "why TrainDataset differs:" in text
+
+
+class TestDuplicateStems:
+    """One image under two extensions is counted once by this project and
+    twice by the reference. It survived the pair count because a dict keyed on
+    stems hides it -- so it has to be checked on its own, not inside the
+    count diagnosis that only runs when the count already looks wrong."""
+
+    def test_a_duplicated_stem_is_an_error_even_at_the_expected_count(self, tmp_path):
+        names = [f"{i}.png" for i in range(1, 61)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        Image.new("RGB", (32, 24)).save(root / "TestDataset/CVC-300/images/1.jpg")
+        rep = check_layout(root, splits=["TestDataset/CVC-300"])
+        assert rep.counts["TestDataset/CVC-300"] == 60, "the pair count still looks right"
+        assert not rep.ok
+        assert any("belong to more than one file" in e for e in rep.errors)
+
+    def test_the_error_quotes_the_counts_the_reference_would_compare(self, tmp_path):
+        names = [f"{i}.png" for i in range(1, 61)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        Image.new("RGB", (32, 24)).save(root / "TestDataset/CVC-300/images/1.jpg")
+        rep = check_layout(root, splits=["TestDataset/CVC-300"])
+        assert any("compares 61 with 60" in e for e in rep.errors)
+
+    def test_distinct_stems_under_mixed_extensions_are_fine(self, tmp_path):
+        """Mixed .jpg/.png across *different* images is what Kvasir-SEG looks
+        like after conversion; only a collision is a problem."""
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300",
+                           [f"{i}.png" for i in range(1, 31)]
+                           + [f"{i}.jpg" for i in range(31, 61)],
+                           [f"{i}.png" for i in range(1, 61)])
+        rep = check_layout(root, splits=["TestDataset/CVC-300"])
+        assert rep.ok, rep.summary()
+        assert rep.counts["TestDataset/CVC-300"] == 60

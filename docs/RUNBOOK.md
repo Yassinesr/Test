@@ -88,7 +88,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `309 passed` in about 25 seconds. These are CPU-only and need no data.
+Expect `319 passed` in about 25 seconds. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -214,8 +214,53 @@ What it will tell you, in the order these actually happen:
 | *N image(s) have no mask with a matching name* | incomplete unpack; re-download rather than deleting the orphans |
 | *pairs differ in size* | the archive did not unpack cleanly |
 | *extension the reference dataloader filters out* | your copy works here but the original repo would silently skip those files, so the two are not comparable |
-| *N split(s) differ from the counts the PraNet archive distributes* | a warning, not an error — §1.2 documents a real 300-vs-380 discrepancy for CVC-ColonDB. Unexplained, not wrong |
+| *N stem(s) in images/ belong to more than one file* | the same image under two extensions. This project pairs by stem and would take whichever sorts last; the reference counts files and its `assert len(images) == len(gts)` fires. Delete the copy you do not want |
+| *N split(s) differ from the counts the PraNet archive distributes* | a warning, not an error — §1.2 documents a real 300-vs-380 discrepancy for CVC-ColonDB. Unexplained, not wrong. The `why <split> differs` block underneath says which cause it is; see below |
 | *`TestDataset/test/` is absent* | **expected, and not a problem.** See below |
+
+### If a count differs
+
+The checker does not stop at `differs (-162)`. It has already listed the
+directory, so it spends the rest of that listing on telling you which cause
+you are looking at:
+
+```
+why TrainDataset differs:
+  - files on disk: images/ 1288, masks/ 1288; distinct stems: 1288 and 1288
+  - both sides agree and every file is paired, so the 162 absent item(s) are
+    missing from images/ and masks/ alike. A transfer that stopped
+    mid-directory leaves orphans on one side; there are none.
+  - names by shape: 900 alphanumeric (= the Kvasir-SEG share exactly), 388 numeric
+  - the archive is Kvasir-SEG 900, CVC-ClinicDB 550, and the two corpora are
+    named differently, so the group that is short is the one to re-copy.
+  - numeric names run 1-388 unbroken -- nothing is missing from inside that
+    range, the sequence simply stops at 388.
+```
+
+Read it as a decision tree — the four cases have different fixes:
+
+| the diagnosis says | what happened | what to do |
+|---|---|---|
+| *N image(s) have no mask* (an error, above) | a copy or unzip stopped part-way through one directory | redo that transfer |
+| *one contiguous block, A-B* | same, but restarted past the gap | redo that transfer |
+| *scattered, e.g. [...]* | something selected files out on purpose | find out what, and why, before you train |
+| *runs 1-N unbroken* / a shape group short | that corpus was never fully copied | re-copy that corpus |
+
+`TrainDataset` is the one to care about, because it is two corpora
+concatenated — 900 Kvasir-SEG and 550 CVC-ClinicDB — that name their files
+differently. The shape histogram therefore tells you which half is short
+without your opening a single directory.
+
+**A short training set is not a small problem.** Training on 1288 of 1450
+images is a different experiment from the one every number in §1.2 refers to,
+and the gap is not a constant offset you can subtract later: the missing
+images are a whole corpus's tail, not a random sample, so the model sees a
+different mixture of the two domains. Fix the data before Step 4. If you
+genuinely cannot — the source is gone, say — then freeze the manifest anyway
+and treat every comparison against a published number as unusable; the
+candidate-vs-baseline comparison inside this repository remains valid,
+because both arms see the same frozen manifest, and that internal comparison
+is what C1/C2/C3 are written against.
 
 ### One quirk worth knowing
 
