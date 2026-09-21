@@ -89,6 +89,16 @@ Three things come out, in increasing order of how much they license:
    overlapping pair of splits shows a spike of near-zero nearest-neighbour
    distances that no threshold choice can hide; a disjoint pair is unimodal
    near 32, the expectation for independent 64-bit hashes.
+
+   Two things move this number without any overlap, and both must be held in
+   mind before reading a row. **Corpus self-similarity:** every colonoscopy
+   frame shares a dark vignette and a narrow colour gamut, so even disjoint
+   splits sit well below 32 — on the PraNet sets, 16–22 is the disjoint
+   baseline, not 32. **Target-set size:** the nearest of 1288 candidates is
+   closer than the nearest of 60, so the `-> TrainDataset` column reads lower
+   than the test-to-test columns for arithmetic reasons alone. Compare
+   *within* a column, and treat as overlap only what falls far below that
+   column's own baseline.
 3. **Exact decoded-pixel duplicates** — admit no interpretation at all. They
    are reported by location (`within A`, `A <-> B`), because 76 duplicates
    inside one split and 76 spanning train and test are different findings with

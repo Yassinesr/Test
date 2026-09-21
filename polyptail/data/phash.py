@@ -30,7 +30,10 @@ under aHash alone.
 Thresholds are a judgement call, so the report does not rest on them: it also
 publishes, for every ordered pair of splits, the distribution of each image's
 **nearest-neighbour distance** into the other split, plus the closest pairs
-regardless of threshold.  An overlapping pair of splits shows a spike of
+regardless of threshold.  Read a median against its own column, not against
+32: a self-similar corpus lowers every distance, and the nearest of 1288
+candidates is closer than the nearest of 60 whether or not the splits overlap.
+An overlapping pair of splits shows a spike of
 near-zero nearest-neighbour distances that no threshold choice can hide, and a
 genuinely disjoint pair shows a clean unimodal bulk around 32 (the expectation
 for independent 64-bit hashes).
