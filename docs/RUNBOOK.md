@@ -88,7 +88,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `366 passed` in well under a minute. These are CPU-only and need no data.
+Expect `370 passed` in well under a minute. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data

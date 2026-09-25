@@ -212,3 +212,79 @@ class TestFindings:
     def test_the_summary_carries_the_findings(self, tmp_path):
         rep = self._subset_tree(tmp_path)
         assert "Findings (threshold-free evidence only):" in rep.summary()
+
+
+class TestSelectionLeakage:
+    """Only a decoded-pixel collision blocks a run. An earlier version blocked
+    on the flag count, which is threshold-dependent -- the same signal this
+    report tells you never to act on alone."""
+
+    def _tree(self, tmp_path, planted_exact=False, val_shift=500.0):
+        rng = np.random.default_rng(5)
+        for split in ("TrainDataset", "ValidationDataset"):
+            (tmp_path / split / "images").mkdir(parents=True)
+            (tmp_path / split / "masks").mkdir(parents=True)
+        for i in range(8):
+            img = textured(rng, 64, 80, seed_shift=i * 17.3)
+            img.save(tmp_path / "TrainDataset" / "images" / f"{i}.png")
+            Image.new("L", img.size, 255).save(tmp_path / "TrainDataset" / "masks" / f"{i}.png")
+        for i in range(6):
+            img = textured(rng, 64, 80, seed_shift=val_shift + i * 17.3)
+            img.save(tmp_path / "ValidationDataset" / "images" / f"v{i}.png")
+            Image.new("L", img.size, 255).save(
+                tmp_path / "ValidationDataset" / "masks" / f"v{i}.png")
+        if planted_exact:
+            dup = Image.open(tmp_path / "TrainDataset" / "images" / "0.png")
+            dup.save(tmp_path / "ValidationDataset" / "images" / "v0.png")
+            Image.new("L", dup.size, 255).save(
+                tmp_path / "ValidationDataset" / "masks" / "v0.png")
+        manifest = build_manifest(tmp_path, ["TrainDataset", "ValidationDataset"])
+        return audit(tmp_path, manifest, progress=False)
+
+    def test_the_same_image_on_both_sides_blocks(self, tmp_path):
+        v = self._tree(tmp_path, planted_exact=True).selection_leakage()
+        assert v["status"] == "blocking"
+        text = " ".join(v["lines"])
+        assert "byte-identical" in text and "blocks the run" in text
+
+    def test_close_neighbours_alone_do_not_block(self, tmp_path):
+        """Two halves of one corpus of video frames are always going to be
+        close. Calling that a blocker stops a run that is fine."""
+        v = self._tree(tmp_path, val_shift=1.0).selection_leakage()
+        assert v["status"] == "report"
+        text = " ".join(v["lines"])
+        assert "no byte-identical images" in text
+        assert "blocks the run" not in text
+        assert "threshold-dependent and not a verdict" in text
+
+    def test_it_says_where_the_number_sits_in_its_own_column(self, tmp_path):
+        """A median means nothing against 32 in a self-similar corpus; it
+        means something against the other splits' distances into training."""
+        rep = self._tree(tmp_path)
+        for split in ("TestDataset/Kvasir",):
+            (tmp_path / split / "images").mkdir(parents=True)
+            (tmp_path / split / "masks").mkdir(parents=True)
+            rng = np.random.default_rng(9)
+            for i in range(6):
+                img = textured(rng, 64, 80, seed_shift=900 + i * 17.3)
+                img.save(tmp_path / split / "images" / f"{i}.png")
+                Image.new("L", img.size, 255).save(tmp_path / split / "masks" / f"{i}.png")
+        rep = audit(tmp_path, build_manifest(
+            tmp_path, ["TrainDataset", "ValidationDataset", "TestDataset/Kvasir"]),
+            progress=False)
+        text = " ".join(rep.selection_leakage()["lines"])
+        assert "read down the same column" in text
+        assert "TestDataset/Kvasir" in text
+
+    def test_no_validation_split_is_reported_as_not_checked(self, tmp_path):
+        rng = np.random.default_rng(7)
+        (tmp_path / "TrainDataset" / "images").mkdir(parents=True)
+        (tmp_path / "TrainDataset" / "masks").mkdir(parents=True)
+        for i in range(5):
+            img = textured(rng, 64, 80, seed_shift=i * 17.3)
+            img.save(tmp_path / "TrainDataset" / "images" / f"{i}.png")
+            Image.new("L", img.size, 255).save(tmp_path / "TrainDataset" / "masks" / f"{i}.png")
+        rep = audit(tmp_path, build_manifest(tmp_path, ["TrainDataset"]), progress=False)
+        v = rep.selection_leakage()
+        assert v["status"] == "absent"
+        assert "did not run" in " ".join(v["lines"])

@@ -108,7 +108,7 @@ needing **no network at all** are in
 ## 2. Verify the install — no data, no GPU, under a minute
 
 ```bash
-pytest -q                                          # 366 passed, ~35 s
+pytest -q                                          # 370 passed, ~35 s
 python tools/make_smoke_data.py --out ./_smoke_data
 python tools/train.py --config configs/smoke.yaml  # full pipeline on synthetic data
 ```
@@ -391,7 +391,7 @@ tools/                 doctor, prepare_data, freeze_manifest, verify_manifest,
                        hash_collisions, check_memory, train, evaluate,
                        run_ablation, analyze, make_smoke_data
 configs/               base + A0/A1/A2/A3/A5/A6/A7 + sweeps + a CPU smoke config
-tests/                 366 tests, CPU only
+tests/                 370 tests, CPU only
 docs/                  RUNBOOK, PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE,
                        REPRODUCIBILITY
 environment.yml        conda (GPU): conda-forge + torch 2.0.1+cu117 via pip
@@ -420,7 +420,7 @@ CUDA 11.4.
 # What is verified, and what is not
 
 Verified by running it, on CPU, against synthetic data shaped like the PraNet
-distribution: the 366 tests; the smoke run; `prepare_data --link/--check`;
+distribution: the 370 tests; the smoke run; `prepare_data --link/--check`;
 `freeze_manifest`; `verify_manifest` against both a symlink and the real path;
 `hash_collisions`; a 3-arm × 3-seed `run_ablation`; `evaluate --compare`; and
 `analyze` including the verdict. Under both NumPy majors.
