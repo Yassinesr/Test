@@ -88,7 +88,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `361 passed` in well under a minute. These are CPU-only and need no data.
+Expect `366 passed` in well under a minute. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -448,8 +448,12 @@ python -c "import json; print(json.loads(open('runs/timing_probe/train_metrics.j
 ```
 
 Multiply by 100 for one full run, then by 9 for three seeds of A0+A1+A2.
-On a 3080 Ti with fp16 expect somewhere in the region of 8-14 hours per run —
-but **use your measured number, not mine.**
+One measurement, for a sanity check rather than a prediction: a 3080 Ti with
+fp16, batch 16 and 1288 training images runs ~65 s per epoch including the
+first-epoch warm-up, so ~2 hours per 100-epoch run and something like a day
+for the nine. **Use your measured number, not this one** — it moves with the
+scale schedule, the batch size, the training-set size and what else the card
+is doing.
 
 While this runs, check two things in the log:
 
@@ -462,6 +466,14 @@ While this runs, check two things in the log:
    `epoch 1 summary: ... active 0.93 of calls, u=0.31 xi=-0.42 (raw -0.42) ... clamped=0.00`.
    With `warmup_frac: 0.2` the term is still ramping in epoch 1, so a small
    `tail` loss is expected. What matters is `clamped=0.00`.
+
+   `active` is low in early epochs and that is a transient, not a fault: the
+   threshold `u` is estimated from a buffer of deficits the model has already
+   improved on, so while the loss is falling fast the live batch often sits
+   entirely below it. Expect it to climb as the curve flattens. Past the
+   warm-up the trainer warns if it is still under 0.5, because the weight a
+   run actually applies is `lam * active` and a term that fires on a third of
+   steps is not the arm the config describes.
 
 ---
 
@@ -572,7 +584,7 @@ tail -f runs/main/a1_pottc/seed0/train.log | grep summary
 |---|---|
 | `clamped` | must stay near 0.00. Above 0.20 the trainer warns: the shape gradient is off and the weighting is not the advertised one. Raise `pot.tail.buffer_size` first. |
 | `xi` | the fitted shape. Expect roughly -0.3 to -0.8 for a soft-Dice deficit. How far it sits from 0 bounds how much A1 can differ from A3 at all. |
-| `active` | fraction of steps the term fired. Near 0 means `p` is too small for your batch, not that the term is gentle. |
+| `active` | fraction of steps the term fired. Low early on is a transient — `u` lags a falling loss curve. Past warm-up, under 0.5 is warned about: `p` is too small for your batch, and the effective weight is `lam * active`, not `lam`. Recorded per epoch as `tail_active_frac` in `train_metrics.jsonl`. |
 | `degenerate` | PWM denominator collapsed, exponential fallback used. Occasional is fine; common means the pool is too small. |
 
 ---

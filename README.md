@@ -108,7 +108,7 @@ needing **no network at all** are in
 ## 2. Verify the install — no data, no GPU, under a minute
 
 ```bash
-pytest -q                                          # 361 passed, ~40 s
+pytest -q                                          # 366 passed, ~35 s
 python tools/make_smoke_data.py --out ./_smoke_data
 python tools/train.py --config configs/smoke.yaml  # full pipeline on synthetic data
 ```
@@ -201,7 +201,9 @@ every later command**, or the arms stop being comparable. Never lower
 `batch_size` without raising `grad_accum`.
 
 Multiply the probe's `epoch_seconds` by 100 for one full run. Expect roughly
-8–14 h per run on a 3080 Ti, but use your measured number.
+~2 h per run on a 3080 Ti (fp16, batch 16, 1288 training images, ~65 s per
+epoch), but use your measured number — it moves with the scale schedule, the
+batch size and the size of your training split.
 
 ## 6. Run the baseline — this is the gate
 
@@ -272,9 +274,13 @@ the left-tail diagnostics, and a **pre-registered verdict**. If it says REJECT,
 the candidate is rejected — the thresholds live in `polyptail/stats/paired.py`
 and editing them after seeing results makes the test post-hoc.
 
-While it runs, watch `clamped` in the epoch summaries — it must stay near
-0.00. Above 0.20 the trainer warns: the shape gradient is off and the weighting
-is not the advertised one. Raise `pot.tail.buffer_size` first.
+While it runs, watch two fields in the epoch summaries. `clamped` must stay
+near 0.00 — above 0.20 the trainer warns, the shape gradient is off and the
+weighting is not the advertised one; raise `pot.tail.buffer_size` first.
+`active` is the fraction of steps the term fired, and it starts low because
+the threshold is estimated from deficits the model has already improved on;
+it should climb as the loss curve flattens. Past warm-up the trainer warns
+below 0.5, since the weight actually applied is `lam * active`.
 
 ## 8. The rest of the ladder
 
@@ -385,7 +391,7 @@ tools/                 doctor, prepare_data, freeze_manifest, verify_manifest,
                        hash_collisions, check_memory, train, evaluate,
                        run_ablation, analyze, make_smoke_data
 configs/               base + A0/A1/A2/A3/A5/A6/A7 + sweeps + a CPU smoke config
-tests/                 361 tests, CPU only
+tests/                 366 tests, CPU only
 docs/                  RUNBOOK, PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE,
                        REPRODUCIBILITY
 environment.yml        conda (GPU): conda-forge + torch 2.0.1+cu117 via pip
@@ -414,7 +420,7 @@ CUDA 11.4.
 # What is verified, and what is not
 
 Verified by running it, on CPU, against synthetic data shaped like the PraNet
-distribution: the 361 tests; the smoke run; `prepare_data --link/--check`;
+distribution: the 366 tests; the smoke run; `prepare_data --link/--check`;
 `freeze_manifest`; `verify_manifest` against both a symlink and the real path;
 `hash_collisions`; a 3-arm × 3-seed `run_ablation`; `evaluate --compare`; and
 `analyze` including the verdict. Under both NumPy majors.

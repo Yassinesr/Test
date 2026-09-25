@@ -1,6 +1,7 @@
 """End-to-end: manifest -> train -> evaluate -> saved artefacts, on CPU."""
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -266,3 +267,89 @@ def test_folding_the_validation_split_back_in_trains_on_everything(
     assert sum(s.startswith("v") for s in stems) == 5
     blob = json.loads((tmp_path / "runs" / "gate" / "results.json").read_text())
     assert blob["selected"]["source"] == "last"
+
+
+class TestTailActivityIsReported:
+    """lam is nominal; the weight a run actually applies is lam * active. A
+    tail term that fires on a third of steps is not the configured method, and
+    nothing else in the log says so.
+
+    These read ``train.log`` rather than caplog because ``setup_logging``
+    clears the root handlers -- which is also what makes the run directory,
+    not the terminal, the thing a user actually goes back to.
+    """
+
+    def _run(self, dataset, tmp_path, name, **over):
+        # p=0.5 puts the threshold at the buffer median, so a 4-image batch
+        # clears it ~94% of the time. The shipped p=0.15 is tuned for batch 16;
+        # on this 12-image fixture it would gate the term off almost always,
+        # which is a property of the fixture and not what these tests are about.
+        cfg = smoke_cfg(dataset, tmp_path, **{
+            "run.name": name, "pot.tail.mode": "gpd", "pot.tail.buffer_size": 48,
+            "pot.tail.min_buffer": 12, "pot.tail.min_exceedances": 2,
+            "pot.tail.p": "0.5", "pot.tail.alpha": "0.05",
+            "pot.tail.warmup_frac": 0.0, "optim.epochs": "3", **over,
+        })
+        train(cfg)
+        return (tmp_path / "runs" / name / "train.log").read_text()
+
+    def test_a_well_configured_term_fires_on_most_calls(self):
+        """The warning's premise, pinned where it can be stated cleanly.
+
+        End-to-end this needs a training set whose deficits spread out enough
+        for the pooled threshold to land inside a batch; the 12-image fixture
+        here does not give that, which is a property of the fixture. At the
+        loss level the question is exact: feed it spread-out deficits and the
+        term must engage, or a low active fraction would mean nothing.
+        """
+        from polyptail.losses.tail import TailConfig, TailRiskLoss
+
+        cfg = TailConfig(mode="gpd", p=0.5, alpha=0.05, warmup_frac=0.0,
+                         buffer_size=48, min_buffer=12, min_exceedances=2)
+        term = TailRiskLoss(cfg, total_steps=40)
+        g = torch.Generator().manual_seed(0)
+        active = []
+        for _ in range(40):
+            d = torch.rand(8, generator=g, requires_grad=True)
+            _, st = term(d, advance=True)
+            active.append(st["tail/active"])
+        assert sum(active[:2]) == 0, "the buffer has to fill before a threshold exists"
+        settled = active[3:]
+        assert sum(settled) / len(settled) > 0.9, sum(settled) / len(settled)
+
+    def test_the_active_fraction_is_recorded_every_epoch(self, synthetic_dataset, tmp_path):
+        """Whatever the warning threshold is, the number itself belongs in the
+        run's own record, where a later reader can apply their own."""
+        self._run(synthetic_dataset, tmp_path, "active_rec")
+        rows = [json.loads(x) for x in
+                (tmp_path / "runs" / "active_rec" / "train_metrics.jsonl").read_text().splitlines()]
+        assert len(rows) == 3
+        assert all(0.0 <= r["tail_active_frac"] <= 1.0 for r in rows)
+
+    def test_a_threshold_the_batch_never_reaches_is_warned_about(
+            self, synthetic_dataset, tmp_path):
+        """p=0.01 puts u past anything a 4-image batch produces, so the term is
+        gated off on nearly every step while lam still reads 0.3."""
+        log = self._run(synthetic_dataset, tmp_path, "active_low",
+                        **{"pot.tail.p": "0.01", "pot.tail.alpha": "0.001"})
+        assert "tail term fired" in log
+        assert "lam*active" in log
+        assert "not the one the config describes" in log
+
+    def test_the_warning_survives_the_term_never_fitting_at_all(
+            self, synthetic_dataset, tmp_path):
+        """The case worth warning about is the one with no fit statistics to
+        print, so the check cannot live inside the block that prints them."""
+        log = self._run(synthetic_dataset, tmp_path, "active_never",
+                        **{"pot.tail.p": "0.01", "pot.tail.alpha": "0.001"})
+        assert "summary:" not in log, "nothing ever fitted, so there is no summary line"
+        assert "fired on 0% of calls" in log
+
+    def test_warmup_epochs_are_not_warned_about(self, synthetic_dataset, tmp_path):
+        """During warm-up the threshold comes from a buffer of older, larger
+        deficits, so a fast-improving model rarely exceeds it. A transient, not
+        a misconfiguration."""
+        log = self._run(synthetic_dataset, tmp_path, "active_warm",
+                        **{"pot.tail.p": "0.01", "pot.tail.alpha": "0.001",
+                           "pot.tail.warmup_frac": "1.0"})
+        assert "tail term fired" not in log
