@@ -23,6 +23,9 @@ def smoke_cfg(dataset, tmp_path, **overrides):
         "optim.scales": "[1.0]", "optim.amp": "off",
         "eval.num_workers": "0", "run.out_dir": str(tmp_path / "runs"),
         "run.log_every": "100", "run.seed": "0",
+        # base.yaml selects on ValidationDataset; each test here opts into a
+        # selection rule explicitly, so none of them inherits one silently.
+        "data.val_split": "null", "run.select": "last",
     }
     base.update({k: str(v) for k, v in overrides.items()})
     return apply_overrides(cfg, [f"{k}={v}" for k, v in base.items()])
@@ -105,7 +108,16 @@ class TestProtocolGuards:
         blob = json.loads((tmp_path / "runs" / "val" / "results.json").read_text())
         assert blob["selected"]["source"] == "val_dice"
 
-    def test_same_seed_gives_the_same_result(self, synthetic_dataset, tmp_path):
+    def test_same_seed_reproduces_a_run_to_tolerance(self, synthetic_dataset, tmp_path):
+        """A tolerance, not equality -- deliberately.
+
+        `run.deterministic=true` removes cuDNN autotuning and every kernel
+        that has a deterministic alternative, but bilinear upsample backward
+        has none on CUDA and this decoder uses it throughout. So a fixed seed
+        reproduces a GPU run closely, not bit-exactly. Asserting equality here
+        would pass on CPU and quietly mislead anyone reading it as a guarantee
+        for the runs that matter.
+        """
         a = train(smoke_cfg(synthetic_dataset, tmp_path, **{
             "run.name": "seedA", "run.seed": 7, "run.deterministic": "true"}))
         b = train(smoke_cfg(synthetic_dataset, tmp_path, **{
@@ -135,3 +147,122 @@ def test_the_loss_term_adds_no_parameters(synthetic_dataset, tmp_path):
         "run.name": "p_gpd", "pot.tail.mode": "gpd",
         "pot.tail.buffer_size": 48, "pot.tail.min_buffer": 12, "pot.tail.min_exceedances": 4}))
     assert a["params"] == b["params"]
+
+
+class TestDeterminismIsHonest:
+    """Asking for determinism on CUDA must not silently under-deliver."""
+
+    def test_warns_that_gpu_runs_are_not_bit_identical(self, monkeypatch, caplog):
+        import logging
+
+        import torch
+
+        from polyptail.utils.env import seed_everything
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "manual_seed_all", lambda s: None)
+        with caplog.at_level(logging.WARNING, logger="polyptail.utils.env"):
+            seed_everything(0, deterministic=True)
+        text = " ".join(r.message for r in caplog.records)
+        assert "bilinear" in text and "NOT" in text, (
+            "requesting determinism on CUDA must say that bit-identical runs are "
+            f"not achievable; got: {text!r}"
+        )
+
+    def test_stays_quiet_when_determinism_is_not_requested(self, monkeypatch, caplog):
+        import logging
+
+        import torch
+
+        from polyptail.utils.env import seed_everything
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "manual_seed_all", lambda s: None)
+        with caplog.at_level(logging.WARNING, logger="polyptail.utils.env"):
+            seed_everything(0, deterministic=False)
+        assert not [r for r in caplog.records if "bilinear" in r.message]
+
+
+class TestHeldOutValidationDirectory:
+    """`data.val_split` selects on a directory rather than on a fold carved
+    out at a seed. The gain is provenance -- the split is in the manifest, so
+    which images chose the checkpoint survives the run."""
+
+    def test_it_selects_and_records_where_the_criterion_came_from(
+            self, synthetic_dataset, tmp_path):
+        cfg = smoke_cfg(synthetic_dataset, tmp_path, **{
+            "run.name": "valdir", "data.val_split": "ValidationDataset",
+            "run.select": "val_dice",
+        })
+        train(cfg)
+        blob = json.loads((tmp_path / "runs" / "valdir" / "results.json").read_text())
+        assert blob["selected"]["source"] == "val_dice"
+        assert blob["selected"]["val_set"] == "ValidationDataset"
+        assert blob["selected"]["val_pairs"] == 5
+
+    def test_the_training_split_keeps_every_image(self, synthetic_dataset, tmp_path):
+        """A held-out directory must not also shrink the training split --
+        that is what val_frac does, and doing both would be a silent third
+        experiment."""
+        cfg = smoke_cfg(synthetic_dataset, tmp_path, **{
+            "run.name": "valdir2", "data.val_split": "ValidationDataset",
+            "run.select": "val_dice", "pot.tail.mode": "gpd",
+            "pot.tail.buffer_size": 48, "pot.tail.min_buffer": 12,
+            "pot.tail.min_exceedances": 4,
+        })
+        train(cfg)
+        rows = (tmp_path / "runs" / "valdir2" / "per_image_deficits.csv"
+                ).read_text().strip().split("\n")[1:]
+        stems = {r.split(",")[2] for r in rows}
+        assert len(stems) == 12, "all 12 training images are still trained on"
+        assert not any(s.startswith("v") for s in stems), "no validation image trains"
+
+    def test_an_overlap_with_training_is_refused_before_the_first_epoch(
+            self, synthetic_dataset, tmp_path):
+        """Name-level overlap is the cheap check; it is worth running because
+        the expensive one -- pixel identity, via tools/hash_collisions.py --
+        is not something a training run can do for itself."""
+        import shutil
+
+        from polyptail.data.manifest import build_manifest, write_manifest
+
+        root, _ = synthetic_dataset
+        for sub in ("images", "masks"):
+            shutil.copy(root / "TrainDataset" / sub / "000.png",
+                        root / "ValidationDataset" / sub / "000.png")
+        manifest = build_manifest(root, ["TrainDataset", "ValidationDataset", "TestDataset/Fake"])
+        write_manifest(manifest, root / "manifest.json", root / "manifest.sha256")
+        cfg = smoke_cfg(synthetic_dataset, tmp_path, **{
+            "run.name": "overlap", "data.val_split": "ValidationDataset",
+            "run.select": "val_dice",
+        })
+        with pytest.raises(ValueError, match="appear in both"):
+            train(cfg)
+
+    def test_a_missing_validation_split_names_the_fix(self, synthetic_dataset, tmp_path):
+        cfg = smoke_cfg(synthetic_dataset, tmp_path, **{
+            "run.name": "novaldir", "data.val_split": "NoSuchDataset",
+            "run.select": "val_dice",
+        })
+        with pytest.raises(KeyError, match="freeze_manifest"):
+            train(cfg)
+
+
+def test_folding_the_validation_split_back_in_trains_on_everything(
+        synthetic_dataset, tmp_path):
+    """The reproduction gate: 12 training + 5 validation images, all trained
+    on, nothing held out, checkpoint taken at the last epoch."""
+    cfg = smoke_cfg(synthetic_dataset, tmp_path, **{
+        "run.name": "gate", "data.extra_train_splits": '["ValidationDataset"]',
+        "data.val_split": "null", "run.select": "last",
+        "pot.tail.mode": "gpd", "pot.tail.buffer_size": 48,
+        "pot.tail.min_buffer": 12, "pot.tail.min_exceedances": 4,
+    })
+    train(cfg)
+    rows = (tmp_path / "runs" / "gate" / "per_image_deficits.csv"
+            ).read_text().strip().split("\n")[1:]
+    stems = {r.split(",")[2] for r in rows}
+    assert len(stems) == 17, "12 training + 5 validation images"
+    assert sum(s.startswith("v") for s in stems) == 5
+    blob = json.loads((tmp_path / "runs" / "gate" / "results.json").read_text())
+    assert blob["selected"]["source"] == "last"

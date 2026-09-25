@@ -102,6 +102,36 @@ That alone removes one whole class of failure, and it sidesteps Anaconda's
 commercial terms for the `defaults` channels, which many organisations block
 deliberately.
 
+#### pip times out on download.pytorch.org
+
+```
+ReadTimeoutError: HTTPSConnectionPool(host='download.pytorch.org', port=443): Read timed out.
+ERROR: Could not find a version that satisfies the requirement torch==2.0.1+cu117
+```
+
+This one misreads badly: the second line looks like a missing package, but the
+version list it prints comes from PyPI, which answered fine. Only the PyTorch
+index timed out, and `+cu117` exists nowhere else — so pip is not confused, it
+is correct that the requirement cannot be satisfied.
+
+Two things follow. The environment files therefore pin `torch==2.0.1` with no
+local version, so either index can serve it; if you hit this on an older
+checkout, pull. And the conda half of `conda env create` has *already
+succeeded* by this point, so finish the environment rather than starting over:
+
+```bash
+conda activate polyptail
+pip install torch==2.0.1                                              # PyPI
+pip install torch==2.0.1 -i https://pypi.tuna.tsinghua.edu.cn/simple  # or a mirror
+python -c "import torch; print(torch.__version__, torch.version.cuda)"
+```
+
+`torch.version.cuda` must print `11.7`. The plain pin resolves to the CUDA
+11.7 build from PyPI — pytorch.org's previous-versions page documents
+`pip install torch==2.0.1` with no index URL as exactly that — but verify it
+rather than assume, because that is the whole property the local pin used to
+guarantee.
+
 #### Tsinghua (TUNA) mirrors
 
 If upstream is reachable but slow or blocked — and the mirror is reachable

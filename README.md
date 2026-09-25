@@ -50,11 +50,28 @@ Three environment files, all producing the same package set:
 | `environment-cpu.yml` | no GPU: unit tests, the smoke run, `tools/analyze.py` |
 | `environment-cn.yml` | pypi.org / repo.anaconda.com blocked or slow — routes through the Tsinghua (TUNA) mirrors |
 
-Verify before going further:
+Verify before going further — `torch.version.cuda` is the load-bearing one,
+because the pin names a version, not a CUDA build:
 
 ```bash
-python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-# expect: 2.0.1+cu117 True NVIDIA GeForce RTX 3080 Ti
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+# expect: 2.0.1+cu117 11.7 True
+```
+
+`torch.version.cuda` must be `11.7`. The pin is `torch==2.0.1` rather than
+`torch==2.0.1+cu117` on purpose: a `+local` version can only be served by
+`download.pytorch.org`, which is slow or blocked from much of the world, and
+that turns an install into a five-minute timeout ending in *"No matching
+distribution found"*. The default PyPI wheel for torch 2.0.1 **is** the CUDA
+11.7 build, so the plain pin gets the same thing from either index.
+
+If pip times out on `download.pytorch.org` anyway, the conda half has already
+succeeded — finish the environment by hand rather than starting over:
+
+```bash
+conda activate polyptail
+pip install torch==2.0.1                                    # PyPI
+pip install torch==2.0.1 -i https://pypi.tuna.tsinghua.edu.cn/simple   # or a mirror
 ```
 
 Three things in those files are deliberate, and each prevents a confusing
@@ -91,7 +108,7 @@ needing **no network at all** are in
 ## 2. Verify the install — no data, no GPU, under a minute
 
 ```bash
-pytest -q                                          # 297 passed, ~25 s
+pytest -q                                          # 361 passed, ~40 s
 python tools/make_smoke_data.py --out ./_smoke_data
 python tools/train.py --config configs/smoke.yaml  # full pipeline on synthetic data
 ```
@@ -142,6 +159,20 @@ TestDataset/CVC-300                    60        60  ok
 TestDataset/ETIS-LaribPolypDB         196       196  ok
 ```
 
+If you hold your own validation split out of the 1450-image training pool, put
+it in `dataset/ValidationDataset/` (`images/` and `masks/`, or `gts/`). The
+checker then reconciles the partition instead of calling the training half
+short, `freeze_manifest.py` hashes it with everything else, and
+`configs/base.yaml` selects the checkpoint on it. With the stock archive,
+which ships no validation set, set `data.val_split: null` and
+`run.select: last`. See the RUNBOOK section "If you hold out your own
+validation split".
+
+```
+TrainDataset                         1288      1450  re-split (-162)
+ValidationDataset                     162         -  held out by you
+```
+
 ## 4. Freeze the data and publish the duplicate audit
 
 ```bash
@@ -183,6 +214,25 @@ Sequential on purpose: two runs do not fit on 12 GB, and interleaving destroys
 the wall-clock measurement A5 needs. The runner skips any `(config, seed)` that
 already has a `results.json`, so an interrupted sweep resumes by re-running the
 same command. Use `tmux`.
+
+**If you re-split the training pool, this gate needs one extra run first.** The
+published numbers were measured on all 1450 images with the checkpoint taken at
+the last epoch. A 1288-image run selected on validation is a different
+experiment, so missing the band would not tell you whether your harness is
+wrong or your training set is smaller — and distinguishing those two is the
+only reason the gate exists:
+
+```bash
+python tools/run_ablation.py --configs configs/a0_baseline.yaml --seeds 0 \
+    --out-dir runs/gate \
+    data.extra_train_splits='["ValidationDataset"]' \
+    data.val_split=null run.select=last
+```
+
+One seed is enough: you are testing the harness, not estimating an effect.
+That run is what licenses any comparison against a published number. Every arm
+after it — A0 included — goes back to your train/validation split, where the
+comparison that matters is internal and both arms read the same manifest.
 
 Then check the band — **every split within ±0.5 mDice**, compared against
 `dice_sweep`, not `dice`, because the published numbers are threshold-averaged:
@@ -335,7 +385,7 @@ tools/                 doctor, prepare_data, freeze_manifest, verify_manifest,
                        hash_collisions, check_memory, train, evaluate,
                        run_ablation, analyze, make_smoke_data
 configs/               base + A0/A1/A2/A3/A5/A6/A7 + sweeps + a CPU smoke config
-tests/                 297 tests, CPU only
+tests/                 361 tests, CPU only
 docs/                  RUNBOOK, PROTOCOL, CANDIDATE1_POT_TC, EXPERIMENTS, HARDWARE,
                        REPRODUCIBILITY
 environment.yml        conda (GPU): conda-forge + torch 2.0.1+cu117 via pip
@@ -364,7 +414,7 @@ CUDA 11.4.
 # What is verified, and what is not
 
 Verified by running it, on CPU, against synthetic data shaped like the PraNet
-distribution: the 297 tests; the smoke run; `prepare_data --link/--check`;
+distribution: the 361 tests; the smoke run; `prepare_data --link/--check`;
 `freeze_manifest`; `verify_manifest` against both a symlink and the real path;
 `hash_collisions`; a 3-arm × 3-seed `run_ablation`; `evaluate --compare`; and
 `analyze` including the verdict. Under both NumPy majors.

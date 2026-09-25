@@ -48,6 +48,15 @@ Prefer pip and a plain virtualenv? `requirements-dev.txt` plus
 `pip install torch==2.0.1 --index-url https://download.pytorch.org/whl/cu117`
 gives the same environment.
 
+**pip timed out on `download.pytorch.org` at the end?** The conda half already
+succeeded; finish the environment instead of re-creating it:
+
+```bash
+conda activate polyptail
+pip install torch==2.0.1        # or add -i https://pypi.tuna.tsinghua.edu.cn/simple
+python -c "import torch; print(torch.__version__, torch.version.cuda)"   # expect 11.7
+```
+
 **Behind a proxy, or upstream blocked?** Run `python tools/doctor.py` first —
 it is standard-library only, so it works in conda's `base` before any
 environment exists, and it prints the shortest route from whatever state you
@@ -79,7 +88,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `297 passed` in about 25 seconds. These are CPU-only and need no data.
+Expect `361 passed` in well under a minute. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -187,6 +196,8 @@ The target layout:
 ```
 dataset/                       # a directory, or a symlink to one
   TrainDataset/{images,masks}/
+  ValidationDataset/{images,masks}/   # optional; see "If you hold out your own
+                                      # validation split" below
   TestDataset/Kvasir/{images,masks}/
   TestDataset/CVC-ClinicDB/{images,masks}/
   TestDataset/CVC-ColonDB/{images,masks}/
@@ -205,8 +216,101 @@ What it will tell you, in the order these actually happen:
 | *N image(s) have no mask with a matching name* | incomplete unpack; re-download rather than deleting the orphans |
 | *pairs differ in size* | the archive did not unpack cleanly |
 | *extension the reference dataloader filters out* | your copy works here but the original repo would silently skip those files, so the two are not comparable |
-| *N split(s) differ from the counts the PraNet archive distributes* | a warning, not an error — §1.2 documents a real 300-vs-380 discrepancy for CVC-ColonDB. Unexplained, not wrong |
+| *N stem(s) in images/ belong to more than one file* | the same image under two extensions. This project pairs by stem and would take whichever sorts last; the reference counts files and its `assert len(images) == len(gts)` fires. Delete the copy you do not want |
+| *N split(s) differ from the counts the PraNet archive distributes* | a warning, not an error — §1.2 documents a real 300-vs-380 discrepancy for CVC-ColonDB. Unexplained, not wrong. The `why <split> differs` block underneath says which cause it is; see below |
 | *`TestDataset/test/` is absent* | **expected, and not a problem.** See below |
+
+### If a count differs
+
+First: if you held out your own validation split, this is not the section you
+want — a `ValidationDataset/` that accounts for the shortfall is reconciled,
+not reported, and the status reads `re-split` instead. See below.
+
+Otherwise, the checker does not stop at `differs (-162)`. It has already
+listed the directory, so it spends the rest of that listing on telling you
+which cause you are looking at:
+
+```
+why TrainDataset differs:
+  - files on disk: images/ 1288, masks/ 1288; distinct stems: 1288 and 1288
+  - both sides agree and every file is paired, so the 162 absent item(s) are
+    missing from images/ and masks/ alike. A transfer that stopped
+    mid-directory leaves orphans on one side; there are none.
+  - names by shape: 900 alphanumeric (= the Kvasir-SEG share exactly), 388 numeric
+  - the archive is Kvasir-SEG 900, CVC-ClinicDB 550, and the two corpora are
+    named differently, so the group that is short is the one to re-copy.
+  - numeric names run 1-388 unbroken -- nothing is missing from inside that
+    range, the sequence simply stops at 388.
+```
+
+Read it as a decision tree — the four cases have different fixes:
+
+| the diagnosis says | what happened | what to do |
+|---|---|---|
+| *N image(s) have no mask* (an error, above) | a copy or unzip stopped part-way through one directory | redo that transfer |
+| *one contiguous block, A-B* | same, but restarted past the gap | redo that transfer |
+| *scattered, e.g. [...]* | something selected files out on purpose | find out what, and why, before you train |
+| *runs 1-N unbroken* / a shape group short | that corpus was never fully copied | re-copy that corpus |
+
+`TrainDataset` is the one to care about, because it is two corpora
+concatenated — 900 Kvasir-SEG and 550 CVC-ClinicDB — that name their files
+differently. The shape histogram therefore tells you which half is short
+without your opening a single directory.
+
+**A short training set is not a small problem.** Training on 1288 of 1450
+images is a different experiment from the one every number in §1.2 refers to,
+and the gap is not a constant offset you can subtract later: the missing
+images are a whole corpus's tail, not a random sample, so the model sees a
+different mixture of the two domains. Fix the data before Step 4. If you
+genuinely cannot — the source is gone, say — then freeze the manifest anyway
+and treat every comparison against a published number as unusable; the
+candidate-vs-baseline comparison inside this repository remains valid,
+because both arms see the same frozen manifest, and that internal comparison
+is what C1/C2/C3 are written against.
+
+### If you hold out your own validation split
+
+The distributed archive ships no validation set, which is why the released
+`Train.py` ends up checkpointing on the test sets. If you split the 1450-image
+training pool yourself, put the held-out part in `dataset/ValidationDataset/`
+(`images/` and `masks/`, or `gts/` — both names are read) and everything below
+picks it up:
+
+* `prepare_data.py --check` counts it, and reconciles the partition rather than
+  reporting the training half as short:
+
+  ```
+  TrainDataset                         1288      1450  re-split (-162)
+  ValidationDataset                     162         -  held out by you
+  ...
+  note: TrainDataset (1288) + ValidationDataset (162) = 1450, the size of the
+  pool PraNet distributes as TrainDataset.
+  ```
+
+  If the two halves do **not** add up, that is a warning with the arithmetic
+  in it: images went missing in the split, or were duplicated into both halves.
+
+* `freeze_manifest.py` includes it automatically and says so. This matters
+  more than it sounds: the split that chooses which weights you report is the
+  one split that must be verifiable, and a manifest entry gives it a SHA-256
+  per file.
+
+* `configs/base.yaml` selects on it — `data.val_split: ValidationDataset`,
+  `run.select: val_dice` — and every ablation arm inherits that, so no two
+  arms are selected by different rules. The test splits are read once, after
+  training. With the stock archive and no validation directory, set
+  `data.val_split: null` and `run.select: last`.
+
+* The trainer refuses to start if a stem appears in both `TrainDataset` and
+  `ValidationDataset`. That is the cheap check; run `tools/hash_collisions.py`
+  for the real one, which compares pixels and catches the same frame saved
+  twice under two names.
+
+`data.val_frac` remains for datasets with no such directory: it carves the
+fold out of the training split at `data.val_seed`. Setting both is an error.
+Prefer the directory — a fold is reproducible only while the seed, the
+fraction *and* the ordering of the training split all hold still, whereas a
+directory is in the manifest.
 
 ### One quirk worth knowing
 
@@ -400,6 +504,25 @@ the brief shows the cross-paper noise floor is already 0.3-0.8 mDice, so a
 harness that is a point off is producing differences larger than anything
 POT-TC could plausibly add. Outside the band you are measuring the harness.
 
+**On a re-split training pool, point this script at a gate run, not at the
+ablation.** The targets above were measured on all 1450 images with the
+checkpoint taken at the last epoch. Training on your 1288 and selecting on
+validation is a different experiment, so a miss would be uninterpretable — the
+one thing the gate exists to rule out is a harness fault, and it cannot do that
+while two things differ at once. Run it once on the whole pool:
+
+```bash
+python tools/run_ablation.py --configs configs/a0_baseline.yaml --seeds 0 \
+    --out-dir runs/gate \
+    data.extra_train_splits='["ValidationDataset"]' \
+    data.val_split=null run.select=last
+```
+
+then read `runs/gate/a0_baseline/seed0/results.json` with the script above. A
+pass licenses comparison against published numbers; it does not make your
+1288-image runs comparable to them, and nothing will. Those stand on the
+internal A0-vs-A1 comparison, where both arms read the same manifest.
+
 Note it compares `dice_sweep`, not `dice`. The published numbers are averaged
 over 256 thresholds; `dice` is the fixed-0.5 operating point. They are
 different quantities.
@@ -514,7 +637,8 @@ mis-annotated ones.
 | `RuntimeError: ... keys loaded, N missing` | wrong or corrupt backbone checkpoint | re-download; this error exists so you do not train from scratch by accident |
 | `torch.cuda.OutOfMemoryError` mid-run | headroom was marginal | drop a rung in step 6, restart the affected seed |
 | a seed died overnight | anything | re-run the identical `run_ablation.py` command; completed seeds are skipped |
-| numbers differ slightly between identical runs | cuDNN autotuning | expected. `run.deterministic=true` for bit-comparable runs, at 10-20% throughput |
+| numbers differ slightly between identical runs | cuDNN autotuning, plus bilinear upsample backward, which has no deterministic CUDA kernel | expected, and not fully fixable on GPU. `run.deterministic=true` removes the autotuning part at 10-20% throughput; a fixed seed then reproduces a run closely, not bit-exactly. See `docs/REPRODUCIBILITY.md` §6 |
+| `UserWarning: upsample_bilinear2d_backward_out_cuda does not have a deterministic implementation` | you set `run.deterministic=true` | expected and harmless — the op keeps its non-deterministic kernel so training can proceed |
 
 Re-scoring a checkpoint must reproduce its run exactly:
 

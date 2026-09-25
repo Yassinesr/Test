@@ -29,7 +29,7 @@ git clone <this repo> && cd Test
 conda env create -f environment.yml    # environment-cpu.yml with no GPU,
                                        # environment-cn.yml behind the TUNA mirrors
 conda activate polyptail
-pytest -q                              # 297 tests, ~25 s on CPU
+pytest -q                              # 361 tests, ~40 s on CPU
 ```
 
 `environment.yml` pins `torch==2.0.1+cu117` and caps NumPy below 2.0 (torch
@@ -151,8 +151,24 @@ is trustworthy.
 ## 6. Known sources of run-to-run variation
 
 * **cuDNN autotuning** is on by default (`run.deterministic: false`). Two runs
-  at the same seed will differ in the last decimals. Set
-  `run.deterministic: true` for bit-comparable runs, at 10-20% throughput.
+  at the same seed will differ in the last decimals. `run.deterministic: true`
+  removes it, at 10-20% throughput.
+* **`run.deterministic: true` does not give bit-identical GPU runs for these
+  models, and cannot.** Both decoders use bilinear upsampling throughout — the
+  CFM ladder, the x8 prediction heads, the multi-scale resize — and
+  `upsample_bilinear2d_backward_out_cuda` has no deterministic implementation
+  in PyTorch. Training sets `warn_only=True`, so that op keeps its
+  non-deterministic kernel rather than raising; you will see a
+  `UserWarning: ... does not have a deterministic implementation` and the run
+  proceeds. The trainer logs a warning saying the same thing when you ask for
+  determinism on CUDA.
+
+  What this means in practice: a fixed seed reproduces a run *closely*, not
+  exactly. Quote a tolerance, never equality, for anything trained on CUDA.
+  It is not a problem for the science — the whole statistical apparatus here
+  treats a seed as a random draw and reports paired intervals across three of
+  them — but it does mean "I re-ran it and got a different last decimal" is
+  expected rather than a bug.
 * **AMP** changes numerics. Keep it constant across arms you intend to compare —
   every config here inherits it from `base.yaml` for that reason.
 * **Dataloader workers** are seeded from the run seed via `worker_init_fn`, so

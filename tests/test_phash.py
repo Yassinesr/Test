@@ -136,3 +136,79 @@ class TestAudit:
         root, manifest = synthetic_dataset
         text = audit(root, manifest, progress=False).summary()
         assert "TrainDataset" in text and "near-duplicate" in text
+
+
+class TestFindings:
+    """A matrix is evidence; a finding is what you act on. These come only
+    from the parts of the report that no threshold choice can move."""
+
+    def _subset_tree(self, tmp_path, n_shared=6, n_extra=6):
+        """`Small` is entirely contained in `Big`, as CVC-300 is in ColonDB."""
+        rng = np.random.default_rng(3)
+        for split in ("Small", "Big"):
+            (tmp_path / split / "images").mkdir(parents=True)
+            (tmp_path / split / "masks").mkdir(parents=True)
+        for i in range(n_shared):
+            img = textured(rng, 64, 80, seed_shift=i * 6.1)
+            for split in ("Small", "Big"):
+                img.save(tmp_path / split / "images" / f"s{i}.png")
+                Image.new("L", img.size, 255).save(tmp_path / split / "masks" / f"s{i}.png")
+        for i in range(n_extra):
+            img = textured(rng, 64, 80, seed_shift=200 + i * 6.1)
+            img.save(tmp_path / "Big" / "images" / f"b{i}.png")
+            Image.new("L", img.size, 255).save(tmp_path / "Big" / "masks" / f"b{i}.png")
+        return audit(tmp_path, build_manifest(tmp_path, ["Small", "Big"]), progress=False)
+
+    def test_a_contained_split_is_named_as_a_subset(self, tmp_path):
+        rep = self._subset_tree(tmp_path)
+        found = "\n".join(rep.findings())
+        assert "Small -> Big" in found
+        assert "subset of Big" in found
+        assert "counts those images twice" in found
+
+    def test_the_containing_split_is_not_called_a_subset(self, tmp_path):
+        """Containment is asymmetric, and reporting it symmetrically would
+        tell you to drop the larger set, which is the wrong fix."""
+        rep = self._subset_tree(tmp_path, n_shared=6, n_extra=30)
+        found = "\n".join(rep.findings())
+        assert "Small -> Big" in found
+        assert "Big -> Small: median nearest-neighbour pHash distance 0.0" not in found
+
+    def test_exact_duplicates_are_located_not_just_counted(self, tmp_path):
+        rep = self._subset_tree(tmp_path)
+        loc = rep.exact_duplicates_by_location()
+        assert loc == {"Big <-> Small": 6}
+        assert any("span Big <-> Small" in f for f in rep.findings())
+
+    def test_within_split_duplicates_are_reported_separately(self, tmp_path):
+        """A split that repeats itself is smaller than its count says, which
+        matters for a method weighted by the tail of a per-image loss."""
+        rng = np.random.default_rng(4)
+        (tmp_path / "A" / "images").mkdir(parents=True)
+        (tmp_path / "A" / "masks").mkdir(parents=True)
+        for i in range(5):
+            img = textured(rng, 64, 80, seed_shift=i * 9.3)
+            img.save(tmp_path / "A" / "images" / f"{i}.png")
+            Image.new("L", img.size, 255).save(tmp_path / "A" / "masks" / f"{i}.png")
+        dup = Image.open(tmp_path / "A" / "images" / "0.png")
+        dup.save(tmp_path / "A" / "images" / "copy.png")
+        Image.new("L", dup.size, 255).save(tmp_path / "A" / "masks" / "copy.png")
+        rep = audit(tmp_path, build_manifest(tmp_path, ["A"]), progress=False)
+        assert rep.exact_duplicates_by_location() == {"within A": 1}
+        assert any("fewer distinct images than pairs" in f for f in rep.findings())
+
+    def test_independent_splits_produce_no_findings(self, tmp_path):
+        rng = np.random.default_rng(11)
+        for split, base in (("A", 0.0), ("B", 400.0)):
+            (tmp_path / split / "images").mkdir(parents=True)
+            (tmp_path / split / "masks").mkdir(parents=True)
+            for i in range(6):
+                img = textured(rng, 64, 80, seed_shift=base + i * 21.7)
+                img.save(tmp_path / split / "images" / f"{i}.png")
+                Image.new("L", img.size, 255).save(tmp_path / split / "masks" / f"{i}.png")
+        rep = audit(tmp_path, build_manifest(tmp_path, ["A", "B"]), progress=False)
+        assert rep.findings() == [], rep.summary()
+
+    def test_the_summary_carries_the_findings(self, tmp_path):
+        rep = self._subset_tree(tmp_path)
+        assert "Findings (threshold-free evidence only):" in rep.summary()

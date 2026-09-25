@@ -14,6 +14,12 @@ Read the output like this:
     average until you have.
   * ``TrainDataset -> TestDataset/*`` non-zero means the in-domain numbers on
     that test set are contaminated.  Say so in the results table.
+  * ``TrainDataset -> ValidationDataset`` non-zero means the checkpoint was
+    selected on images the model trained on, so the selection is optimistic
+    and every number downstream of it inherits that.  This is the one to check
+    first if you re-split the training pool yourself: the trainer already
+    refuses a shared *stem*, but the same frame saved twice under two names
+    passes that check and fails this one.
   * A zero matrix is a *published negative result*, which is worth as much as
     a positive one: it is currently absent from the literature.
 
@@ -78,12 +84,35 @@ def main() -> int:
     print(rep.summary())
     print(f"\nwrote {args.out} and {csv_path}")
 
+    # The check this tool exists to make, for a dataset re-split by hand: a
+    # checkpoint chosen on images the model trained on is optimistic, and
+    # every number downstream of that checkpoint inherits it.
+    if "ValidationDataset" not in rep.splits:
+        print("\nNOTE: no ValidationDataset in this manifest, so the train -> validation")
+        print("leakage check did not run. If you hold a validation split out, re-freeze")
+        print("(tools/freeze_manifest.py picks it up automatically) and run this again.")
+    else:
+        leak = [p for p in rep.pairs
+                if {p["split_a"], p["split_b"]} == {"TrainDataset", "ValidationDataset"}]
+        exact_leak = [g for g in rep.exact_pixel_duplicates
+                      if {"TrainDataset", "ValidationDataset"} <=
+                      {m["split"] for m in g["members"]}]
+        if exact_leak or leak:
+            print(f"\n*** TrainDataset <-> ValidationDataset: {len(leak)} flagged pair(s), "
+                  f"{len(exact_leak)} byte-identical. ***")
+            print("The checkpoint would be selected on images the model trained on. Fix the")
+            print("partition before running; this one blocks the run, not just the claims.")
+        else:
+            print("\nTrainDataset <-> ValidationDataset: clean. Selection is on held-out data.")
+
     cross = [p for p in rep.pairs if p["split_a"] != p["split_b"]]
     if cross:
         print(f"\n*** {len(cross)} cross-split near-duplicate pairs found. ***")
         print("The five test sets are not independent as distributed, and/or the")
-        print("train split leaks into a test split.  See docs/PROTOCOL.md for what")
-        print("to report.  This does not block training; it blocks *claims*.")
+        print("train split leaks into a test or validation split.  See docs/PROTOCOL.md")
+        print("for what to report.  This does not block training; it blocks *claims* --")
+        print("except for TrainDataset -> ValidationDataset, which blocks the run: fix")
+        print("the partition before selecting a checkpoint on it.")
     else:
         print("\nNo cross-split near-duplicates at these thresholds.")
     return 0

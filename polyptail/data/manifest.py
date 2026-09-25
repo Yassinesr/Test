@@ -40,6 +40,8 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 from PIL import Image
 
+from .layout import resolve_mask_dir
+
 __all__ = [
     "SCHEMA",
     "IMAGE_EXTS",
@@ -141,10 +143,20 @@ def _describe(path: Path, as_mask: bool) -> tuple[dict, np.ndarray]:
 
 
 def build_split(root: Path, split_rel: str, strict_sizes: bool = True) -> list[ManifestItem]:
-    """Hash one ``<split>/images`` + ``<split>/masks`` directory pair."""
+    """Hash one ``<split>/images`` + ``<split>/{masks,gts}`` directory pair.
+
+    The mask directory is resolved rather than assumed: a split assembled by
+    hand often ends up under ``gts/``, and the manifest records the path it
+    actually read, so a later verify cannot drift onto the other one.
+    """
     base = root / split_rel
+    msk_dir, _ = resolve_mask_dir(base)
+    if msk_dir is None:
+        raise FileNotFoundError(
+            f"{split_rel}: no masks/ or gts/ directory under {base}"
+        )
     imgs = _index_dir(base / "images", IMAGE_EXTS)
-    msks = _index_dir(base / "masks", MASK_EXTS)
+    msks = _index_dir(msk_dir, MASK_EXTS)
     only_img = sorted(set(imgs) - set(msks))
     only_msk = sorted(set(msks) - set(imgs))
     if only_img or only_msk:

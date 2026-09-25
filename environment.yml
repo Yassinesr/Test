@@ -54,13 +54,25 @@ dependencies:
       # cu11x wheel runs on a driver >= 450.80.02, and sm_86 (RTX 30-series)
       # has been natively compiled in since CUDA 11.1.
       #
-      # The `+cu117` local version is part of the pin on purpose: it exists
-      # only on the PyTorch index, so pip cannot quietly serve the PyPI build
-      # of the same version number instead. `--extra-index-url` (rather than
-      # `--index-url`) lets torch's own dependencies resolve from PyPI.
+      # The pin is `torch==2.0.1` and NOT `torch==2.0.1+cu117`, deliberately.
+      # A `+local` version exists only on download.pytorch.org, so pinning it
+      # makes that one host a hard requirement -- and it is slow or blocked
+      # from a good part of the world, which turns a working install into a
+      # five-minute timeout and "No matching distribution found".
+      #
+      # Nothing is lost by dropping it, because the **default PyPI wheel for
+      # torch 2.0.1 is the CUDA 11.7 build**: pytorch.org's own
+      # previous-versions page gives `pip install torch==2.0.1`, with no index
+      # URL, as the CUDA 11.7 install. The extra index below stays as a second
+      # route in case PyPI is the blocked one, not as a requirement.
+      #
+      # Verify rather than trust, once the environment exists:
+      #   python -c "import torch; print(torch.__version__, torch.version.cuda)"
+      # `torch.version.cuda` must be 11.7. `python tools/doctor.py` prints it
+      # too, along with whether a GPU is actually visible.
       #
       # Conservative fallback if anything misbehaves -- the most cautious
       # combination that still supports an RTX 30-series card:
-      #   - torch==1.13.1+cu117
+      #   - torch==1.13.1
       - --extra-index-url https://download.pytorch.org/whl/cu117
-      - torch==2.0.1+cu117
+      - torch==2.0.1

@@ -89,15 +89,44 @@ Three things come out, in increasing order of how much they license:
    overlapping pair of splits shows a spike of near-zero nearest-neighbour
    distances that no threshold choice can hide; a disjoint pair is unimodal
    near 32, the expectation for independent 64-bit hashes.
-3. **Exact decoded-pixel duplicates** — admit no interpretation at all.
+
+   Two things move this number without any overlap, and both must be held in
+   mind before reading a row. **Corpus self-similarity:** every colonoscopy
+   frame shares a dark vignette and a narrow colour gamut, so even disjoint
+   splits sit well below 32 — on the PraNet sets, 16–22 is the disjoint
+   baseline, not 32. **Target-set size:** the nearest of 1288 candidates is
+   closer than the nearest of 60, so the `-> TrainDataset` column reads lower
+   than the test-to-test columns for arithmetic reasons alone. Compare
+   *within* a column, and treat as overlap only what falls far below that
+   column's own baseline.
+3. **Exact decoded-pixel duplicates** — admit no interpretation at all. They
+   are reported by location (`within A`, `A <-> B`), because 76 duplicates
+   inside one split and 76 spanning train and test are different findings with
+   the same count.
+
+The tool ends with a **Findings** block written only from (2) and (3), never
+from (1), so nothing in it turns on a threshold someone chose.
 
 Act on the result:
 
 * **CVC-300 ∩ CVC-ColonDB non-empty** → report CVC-300 and
   CVC-ColonDB-minus-CVC-300 separately, and do not quote a pooled external
-  average.
+  average. A median nearest-neighbour distance near 0 in one direction only
+  means containment, not mutual overlap: the smaller set is the one to stop
+  treating as independent.
 * **TrainDataset ∩ any test split non-empty** → that test set's numbers are
-  contaminated. Say so in the table, in the caption, every time.
+  contaminated. Say so in the table, in the caption, every time. Note this is
+  expected for CVC-ClinicDB: its 612 frames come from video sequences and the
+  PraNet split cuts them 550/62 *by frame*, so adjacent frames of one sequence
+  land on both sides. That is a property of the published protocol, inherited
+  by every number measured under it, not a fault in your copy.
+* **TrainDataset ∩ ValidationDataset non-empty** → this one blocks the *run*,
+  not just the claims: the checkpoint would be chosen on images the model
+  trained on. Fix the partition and re-split.
+* **A split with duplicates inside it** → its effective size is smaller than
+  its count. This matters here beyond the usual: POT-TC fits a tail to the
+  per-image deficit pool, so an image present k times contributes k
+  exceedances and pulls the GPD fit toward its difficulty.
 * **Empty** → that is a publishable negative result. It is currently absent
   from the literature, and it is the precondition for calling the five test
   sets independent.
@@ -140,7 +169,23 @@ affect whether a "reproduction" lands within ±0.5 mDice:
 4. **Model selection.** The released `Train.py` evaluates all five test sets
    every epoch and checkpoints on the best test mDice. That is selection on
    the test set. It is not implementable here: `run.select` accepts `last`, or
-   `val_dice` against a fold held out of the **training** split.
+   `val_dice` against data the model never trains on — either a held-out
+   directory (`data.val_split`, e.g. `ValidationDataset`) or a fold carved out
+   of the training split at a seed (`data.val_frac`).
+
+   Prefer the directory. A fold is reproducible only as long as the seed, the
+   fraction and the ordering of the training split all stay fixed; a directory
+   is frozen into the manifest with a SHA-256 per file, so which images chose
+   the checkpoint is recoverable from the run's own artefacts. The trainer
+   refuses a `val_split` that shares a stem with the training split, and
+   `tools/hash_collisions.py` is the stronger check — it compares pixels, so
+   it catches the same image saved twice under different names.
+
+   Whichever you use, **every arm must use the same one**. A0 selected at the
+   last epoch and A1 selected on best validation Dice differ by the selection
+   rule as much as by the tail term, and the ablation would not separate them.
+   `configs/base.yaml` sets it once and every arm inherits it; a test asserts
+   the arms agree.
 5. **The selection set does not exist.** That same checkpointing call is
    `test(model, test_path, 'test')` — i.e. `./dataset/TestDataset/test/`, a
    directory the distributed archive does not contain. The released training
