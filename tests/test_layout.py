@@ -442,6 +442,45 @@ class TestMaskDirectoryNames:
     """A hand-assembled split often stores ground truth under gts/ rather than
     masks/. Reading it is fine; not knowing which one you read is not."""
 
+    @pytest.mark.parametrize("alias", ["gt", "gts"])
+    def test_an_alias_is_accepted_with_a_note(self, tmp_path, alias):
+        names = [f"{i}.png" for i in range(1, 61)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        split = root / "TestDataset/CVC-300"
+        (split / "masks").rename(split / alias)
+        rep = check_layout(root, splits=["TestDataset/CVC-300"])
+        assert rep.ok, rep.summary()
+        assert rep.counts["TestDataset/CVC-300"] == 60
+        assert any(f"{alias}/ rather than masks/" in n for n in rep.notes)
+
+    def test_three_aliases_agreeing_pick_the_reference_spelling(self, tmp_path):
+        """Preference order is MASK_DIR_NAMES, so a copy under another name
+        never quietly becomes the one that gets hashed."""
+        names = [f"{i}.png" for i in range(1, 61)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        split = root / "TestDataset/CVC-300"
+        for alias in ("gt", "gts"):
+            (split / alias).mkdir()
+            for n in names:
+                Image.new("L", (32, 24), 0).save(split / alias / n)
+        rep = check_layout(root, splits=["TestDataset/CVC-300"])
+        assert rep.ok, rep.summary()
+        assert any("Reading masks/" in n and "gt/, gts/ ignored" in n for n in rep.notes)
+
+    def test_two_aliases_without_masks_do_not_crash(self, tmp_path):
+        """The earlier version hardcoded masks/ and gts/ in the both-exist
+        branch and would open a directory that is not there."""
+        names = [f"{i}.png" for i in range(1, 61)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        split = root / "TestDataset/CVC-300"
+        (split / "masks").rename(split / "gt")
+        (split / "gts").mkdir()
+        for n in names:
+            Image.new("L", (32, 24), 0).save(split / "gts" / n)
+        rep = check_layout(root, splits=["TestDataset/CVC-300"])
+        assert rep.ok, rep.summary()
+        assert any("Reading gt/" in n for n in rep.notes)
+
     def test_gts_is_accepted_with_a_note(self, tmp_path):
         names = [f"{i}.png" for i in range(1, 61)]
         root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)

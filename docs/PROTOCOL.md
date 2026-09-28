@@ -120,9 +120,20 @@ Act on the result:
   PraNet split cuts them 550/62 *by frame*, so adjacent frames of one sequence
   land on both sides. That is a property of the published protocol, inherited
   by every number measured under it, not a fault in your copy.
-* **TrainDataset ∩ ValidationDataset non-empty** → this one blocks the *run*,
-  not just the claims: the checkpoint would be chosen on images the model
-  trained on. Fix the partition and re-split.
+* **TrainDataset and ValidationDataset share a decoded-pixel duplicate** →
+  this one blocks the *run*, not just the claims: the checkpoint would be
+  chosen on images the model trained on. Fix the partition and re-split.
+
+  Close neighbours without an exact duplicate are a different matter, and the
+  distinction is the whole point of the three-tier reading above. Splitting one
+  pool of video sequences by frame *always* puts adjacent frames of a sequence
+  on both sides; the flag count for it will be large, and it is still only a
+  screening signal. Judge it by reading down the `-> TrainDataset` column: if
+  the validation split is the closest of all the splits by a clear margin, the
+  partition is at fault; if it sits inside the range the test sets occupy, that
+  is corpus self-similarity and a frame-wise split doing what a frame-wise
+  split does. Either way selection is mildly optimistic, so say so — and
+  re-split by sequence rather than by frame if you want it gone.
 * **A split with duplicates inside it** → its effective size is smaller than
   its count. This matters here beyond the usual: POT-TC fits a tail to the
   per-image deficit pool, so an image present k times contributes k

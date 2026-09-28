@@ -201,13 +201,26 @@ class TestProxySourceLocation:
         (tmp_path / ".bashrc").write_text(body)
         return tmp_path
 
+    def _scan(self, doctor, tmp_path):
+        """Scan the fixture's HOME and nothing else.
+
+        The system-wide locations are absolute, so redirecting HOME does not
+        move them: on a host that really does set a proxy in /etc/profile.d --
+        a clash.sh, say -- the real file lands in the results and a test about
+        a temporary directory fails for a reason that has nothing to do with
+        the code. Point them somewhere empty instead.
+        """
+        return doctor.find_proxy_exports(
+            system_files=[], system_profile_dir=str(tmp_path / "no-such-profile.d"))
+
     def test_locates_exports_with_file_and_line(self, tmp_path, monkeypatch):
         home = self._home(tmp_path, "export PATH=/x\n"
                                     "export http_proxy=http://127.0.0.1:16041\n"
                                     "export https_proxy=http://127.0.0.1:16041\n")
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
-        hits = load_doctor().find_proxy_exports()
+        doctor = load_doctor()
+        hits = self._scan(doctor, tmp_path)
         found = {(Path(p).name, n) for p, n, _ in hits}
         assert (".bashrc", 2) in found and (".bashrc", 3) in found
 
@@ -217,14 +230,39 @@ class TestProxySourceLocation:
                                     "export https_proxy=http://127.0.0.1:16041\n")
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
-        hits = load_doctor().find_proxy_exports()
+        doctor = load_doctor()
+        hits = self._scan(doctor, tmp_path)
         assert len(hits) == 1 and "https_proxy" in hits[0][2]
+
+    def test_a_system_wide_proxy_file_is_found(self, tmp_path, monkeypatch):
+        """The point of scanning /etc/profile.d at all: a proxy set there is
+        invisible in the user's own dotfiles and survives editing them."""
+        home = self._home(tmp_path, "export PATH=/x\n")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        etc = tmp_path / "profile.d"
+        etc.mkdir()
+        (etc / "clash.sh").write_text("export http_proxy=http://127.0.0.1:7890\n")
+        hits = load_doctor().find_proxy_exports(
+            system_files=[], system_profile_dir=str(etc))
+        assert [(Path(f).name, n) for f, n, _ in hits] == [("clash.sh", 1)]
+
+    def test_the_hosts_own_etc_cannot_reach_a_redirected_scan(self, tmp_path, monkeypatch):
+        """This is what broke: HOME was redirected but /etc was not, so a host
+        that configures a proxy system-wide failed tests about a tmp dir."""
+        home = self._home(tmp_path, "export PATH=/x\n")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        doctor = load_doctor()
+        assert doctor.SYSTEM_PROFILE_DIR == "/etc/profile.d"
+        assert "/etc/profile" in doctor.SYSTEM_SHELL_RC
+        assert not any(str(f).startswith("/etc") for f, _, _ in self._scan(doctor, tmp_path))
 
     def test_does_not_match_unrelated_exports(self, tmp_path, monkeypatch):
         home = self._home(tmp_path, "export PATH=/x\nexport NO_PROXY_SETTING=1\n")
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
-        assert load_doctor().find_proxy_exports() == []
+        assert self._scan(load_doctor(), tmp_path) == []
 
     def test_recommendation_quotes_the_lines_and_a_safe_sed(self, capsys, tmp_path):
         d = load_doctor()

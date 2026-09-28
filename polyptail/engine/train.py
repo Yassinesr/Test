@@ -36,6 +36,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -310,6 +311,30 @@ def train(cfg: Config) -> dict:
             "tail_active_frac": active_meter.avg,
             **{f"tail_{k}": m.avg for k, m in tail_meters.items()},
         }
+        # Deliberately outside the `did it ever fit` guard below: the case
+        # worth warning about is the one where the tail term never fired, and
+        # that is exactly the case where there are no fit statistics to print.
+        # lam is nominal -- the weight a run actually applies is lam * active.
+        # Early on a low fraction is a transient, because u is estimated from a
+        # buffer of older, larger deficits and a fast-improving model rarely
+        # exceeds it, so the check waits for warm-up to finish.
+        if use_tail and cfg.pot.tail.mode != "none":
+            warmup_epochs = math.ceil(cfg.pot.tail.warmup_frac * cfg.optim.epochs)
+            expected = 100 * (1 - (1 - cfg.pot.tail.p) ** cfg.optim.batch_size)
+            if epoch > max(1, warmup_epochs) and active_meter.avg < 0.5:
+                logger.warning(
+                    "the tail term fired on %.0f%% of calls this epoch, past the %d-epoch "
+                    "warm-up. The effective weight is lam*active = %.3f, not the %.3f in the "
+                    "config: on the other %.0f%% of steps no image in the batch reached the "
+                    "pooled threshold, or the pool was too small to fit. Expect ~%.0f%% at "
+                    "p=%.2f with batch %d. If it stays here, raise pot.tail.p, and do not "
+                    "report lam as configured -- this arm is not the one the config describes.",
+                    100 * active_meter.avg, max(1, warmup_epochs),
+                    cfg.pot.tail.lam * active_meter.avg, cfg.pot.tail.lam,
+                    100 * (1 - active_meter.avg), expected,
+                    cfg.pot.tail.p, cfg.optim.batch_size,
+                )
+
         if tail_meters["xi"].count:
             logger.info(
                 "epoch %3d summary: base %.4f tail %.5f | active %.2f of calls, "

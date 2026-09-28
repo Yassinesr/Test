@@ -178,6 +178,69 @@ class CollisionReport:
             loc[key] = loc.get(key, 0) + 1
         return dict(sorted(loc.items(), key=lambda kv: -kv[1]))
 
+    def selection_leakage(self, train: str = "TrainDataset",
+                          val: str = "ValidationDataset") -> dict:
+        """Does the validation split share images with the training split?
+
+        ``{"status": ..., "lines": [...]}`` where status is ``absent`` (no
+        validation split to check), ``blocking`` (the same image is in both),
+        or ``report`` (close neighbours, which is what splitting one pool of
+        video sequences produces whatever you do).
+
+        Only a decoded-pixel collision blocks. An earlier version of this
+        blocked on the flag count too, which contradicts everything else here:
+        flags depend on three hand-chosen cut-offs, colonoscopy frames trip
+        them for free, and a count of them is a screening signal rather than a
+        verdict. What replaces it is the comparison this report can actually
+        justify -- where the validation split sits among the other splits'
+        distances into training, read down the one column.
+        """
+        if val not in self.splits or train not in self.splits:
+            return {"status": "absent", "lines": [
+                f"no {val} in this manifest, so the {train} -> {val} check did not run. "
+                f"If you hold a validation split out, re-freeze -- freeze_manifest picks "
+                f"it up automatically -- and run this again."]}
+
+        exact = [g for g in self.exact_pixel_duplicates
+                 if {train, val} <= {m["split"] for m in g["members"]}]
+        flagged = [p for p in self.pairs
+                   if {p["split_a"], p["split_b"]} == {train, val}]
+        if exact:
+            return {"status": "blocking", "lines": [
+                f"{len(exact)} group(s) of byte-identical decoded images span {train} and "
+                f"{val}. The same picture is on both sides, which is not a similarity call: "
+                f"the checkpoint would be chosen on images the model trained on. Fix the "
+                f"partition before running -- this blocks the run, not just the claims."]}
+
+        med = self.nn_stats.get(val, {}).get(train, {}).get("phash_median")
+        near2 = self.nn_stats.get(val, {}).get(train, {}).get("phash", {}).get("n_le_2")
+        others = {a: self.nn_stats[a][train]["phash_median"] for a in self.splits
+                  if a not in (train, val) and train in self.nn_stats.get(a, {})
+                  and self.nn_stats[a][train].get("phash_median") is not None}
+
+        lines = [f"{train} <-> {val}: no byte-identical images. {len(flagged)} flagged "
+                 f"near-duplicate pair(s), which is threshold-dependent and not a verdict."]
+        if med is not None:
+            n_val = self.counts.get(val, 0)
+            lines.append(
+                f"{val} -> {train} median nearest-neighbour pHash distance {med:.1f}"
+                + (f", with {near2} of {n_val} within 2 bits" if near2 is not None else ""))
+            if others:
+                lo, hi = min(others.values()), max(others.values())
+                worst = min(others, key=lambda k: others[k])
+                lines.append(
+                    f"read down the same column: the other splits sit at {lo:.1f}-{hi:.1f} "
+                    f"into {train} ({worst} lowest at {others[worst]:.1f}). "
+                    + (f"{val} is the closest of all, by {lo - med:.1f} bits -- that is a "
+                       f"partition problem, not corpus self-similarity."
+                       if med < lo else
+                       f"{val} is within that range, so this is the sequence sharing any "
+                       f"split of one pool produces, not a broken partition."))
+        lines.append(
+            "Selection on it is mildly optimistic either way: say so when reporting, and "
+            "re-split by video sequence rather than by frame if you want it gone.")
+        return {"status": "report", "lines": lines}
+
     def findings(self) -> list[str]:
         """Statements to act on, derived only from evidence without a threshold.
 
