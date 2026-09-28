@@ -57,8 +57,10 @@ PROXY_VARS = ["http_proxy", "https_proxy", "all_proxy", "no_proxy",
               "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"]
 
 #: Where a proxy export usually hides. Finding the file is most of the fix.
-SHELL_RC = ["~/.bashrc", "~/.bash_profile", "~/.profile", "~/.zshrc", "~/.zshenv",
-            "/etc/environment", "/etc/profile"]
+USER_SHELL_RC = ["~/.bashrc", "~/.bash_profile", "~/.profile", "~/.zshrc", "~/.zshenv"]
+SYSTEM_SHELL_RC = ["/etc/environment", "/etc/profile"]
+SYSTEM_PROFILE_DIR = "/etc/profile.d"
+SHELL_RC = USER_SHELL_RC + SYSTEM_SHELL_RC
 
 
 def rule(title: str) -> None:
@@ -196,11 +198,22 @@ def _read(path: Path) -> str:
         return ""
 
 
-def find_proxy_exports() -> list[tuple[str, int, str]]:
-    """Locate the lines that set a proxy, so they can actually be removed."""
+def find_proxy_exports(system_files: list[str] | None = None,
+                       system_profile_dir: str | None = None,
+                       ) -> list[tuple[str, int, str]]:
+    """Locate the lines that set a proxy, so they can actually be removed.
+
+    The system-wide locations are arguments because they are absolute paths.
+    A caller that redirects ``HOME`` -- a test, mostly -- still reads the real
+    ``/etc``, so on a machine that genuinely configures a proxy there (a
+    ``clash.sh`` under ``/etc/profile.d``, say) the result mixes the caller's
+    temporary directory with the host's own configuration.
+    """
     hits: list[tuple[str, int, str]] = []
-    paths = [Path(p).expanduser() for p in SHELL_RC]
-    paths += sorted(Path("/etc/profile.d").glob("*.sh")) if Path("/etc/profile.d").is_dir() else []
+    paths = [Path(p).expanduser() for p in USER_SHELL_RC]
+    paths += [Path(p) for p in (SYSTEM_SHELL_RC if system_files is None else system_files)]
+    profile_d = Path(SYSTEM_PROFILE_DIR if system_profile_dir is None else system_profile_dir)
+    paths += sorted(profile_d.glob("*.sh")) if profile_d.is_dir() else []
     for path in paths:
         text = _read(path)
         if not text:
