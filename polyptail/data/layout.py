@@ -184,47 +184,55 @@ def _diagnose_count(split: str, expected: int, paired: list,
 #: count and is checked as a partition instead. See ``_check_partition``.
 VALIDATION_SPLIT = "ValidationDataset"
 
-#: Directory names a mask folder travels under. ``masks`` is what the
-#: reference code reads; ``gts`` is what several polyp repositories ship and
-#: what a hand-assembled split often ends up with.
-MASK_DIR_NAMES = ("masks", "gts")
+#: Directory names a mask folder travels under, in preference order.
+#: ``masks`` is what the reference code reads; ``gt`` and ``gts`` are what
+#: several polyp repositories ship and what a hand-assembled split often ends
+#: up with. Order is the tie-break when more than one is present.
+MASK_DIR_NAMES = ("masks", "gt", "gts")
 
 
 class AmbiguousMaskDir(Exception):
-    """``masks/`` and ``gts/`` both exist and hold different things."""
+    """More than one mask directory exists and they hold different things."""
 
 
 def resolve_mask_dir(base: Path) -> tuple:
     """Return ``(directory, note)`` for a split's ground truth.
 
-    Raises ``AmbiguousMaskDir`` when both names exist and disagree: with two
-    candidate ground truths and no way to tell which one a number came from,
-    guessing is worse than stopping.
+    Raises ``AmbiguousMaskDir`` when several of ``MASK_DIR_NAMES`` exist and
+    disagree: with two candidate ground truths and no way to tell which one a
+    number came from, guessing is worse than stopping.
     """
     present = [base / n for n in MASK_DIR_NAMES if (base / n).is_dir()]
     if not present:
         return None, None
+    chosen = present[0]
     if len(present) == 1:
-        d = present[0]
-        note = None if d.name == "masks" else (
-            f"{base.name}/ stores ground truth in {d.name}/ rather than masks/. Read here; "
+        note = None if chosen.name == "masks" else (
+            f"{base.name}/ stores ground truth in {chosen.name}/ rather than masks/. Read here; "
             f"the reference code hard-codes masks/, so rename or symlink it before running "
             f"the original scripts.")
-        return d, note
-    masks, gts = base / "masks", base / "gts"
-    m_stems = {f.stem for f in _files(masks)}
-    g_stems = {f.stem for f in _files(gts)}
-    if m_stems != g_stems:
-        only_m, only_g = sorted(m_stems - g_stems), sorted(g_stems - m_stems)
+        return chosen, note
+
+    stems = {d.name: {f.stem for f in _files(d)} for d in present}
+    disagree = [n for n in stems if stems[n] != stems[chosen.name]]
+    if disagree:
+        detail = ", ".join(f"{n}/ ({len(stems[n])})" for n in stems)
+        odd = disagree[0]
+        only_a = sorted(stems[chosen.name] - stems[odd])
+        only_b = sorted(stems[odd] - stems[chosen.name])
         raise AmbiguousMaskDir(
-            f"{base.name}/ has both masks/ ({len(m_stems)}) and gts/ ({len(g_stems)}), and they "
-            f"hold different stems -- masks/ only: {only_m[:3]} ({len(only_m)}), gts/ only: "
-            f"{only_g[:3]} ({len(only_g)}). Two candidate ground truths means a reported number "
-            f"cannot say which one produced it. Delete or rename one.")
-    return masks, (
-        f"{base.name}/ has both masks/ and gts/ with the same {len(m_stems)} stems. Reading "
-        f"masks/; gts/ is ignored. They are compared by name only -- if you edited one, "
-        f"freeze_manifest will hash whichever this reads, so remove the copy you do not want.")
+            f"{base.name}/ has {detail}, and they hold different stems -- "
+            f"{chosen.name}/ only: {only_a[:3]} ({len(only_a)}), {odd}/ only: "
+            f"{only_b[:3]} ({len(only_b)}). Two candidate ground truths means a reported "
+            f"number cannot say which one produced it. Delete or rename all but one.")
+
+    others = [n for n in stems if n != chosen.name]
+    return chosen, (
+        f"{base.name}/ has {', '.join(n + '/' for n in stems)} with the same "
+        f"{len(stems[chosen.name])} stems. Reading {chosen.name}/; "
+        f"{', '.join(n + '/' for n in others)} ignored. They are compared by name only -- if "
+        f"you edited one, freeze_manifest will hash whichever this reads, so remove the "
+        f"copies you do not want.")
 
 
 @dataclass
@@ -322,8 +330,11 @@ def _check_split(root: Path, split: str, rep: LayoutReport) -> None:
                     f"unzipped one level too deep. Move {nested}/* up into {base}/ ."
                 )
             else:
-                present = sorted(p.name for p in base.iterdir())[:6] if base.is_dir() else []
-                rep.errors.append(f"{split}/ has no {name}/ subdirectory (found: {present})")
+                found = sorted(p.name for p in base.iterdir())[:6] if base.is_dir() else []
+                looked = (" or ".join(f"{n}/" for n in MASK_DIR_NAMES)
+                          if name == "masks" else f"{name}/")
+                rep.errors.append(
+                    f"{split}/ has no {looked} subdirectory (found: {found})")
             return
 
     images, masks = _files(img_dir), _files(msk_dir)

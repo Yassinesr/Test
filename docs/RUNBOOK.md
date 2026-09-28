@@ -88,7 +88,7 @@ you installed the CPU wheel by omitting `--index-url`.
 pytest -q
 ```
 
-Expect `370 passed` in well under a minute. These are CPU-only and need no data.
+Expect `374 passed` in well under a minute. These are CPU-only and need no data.
 
 ```bash
 python tools/make_smoke_data.py --out ./_smoke_data
@@ -273,7 +273,7 @@ is what C1/C2/C3 are written against.
 The distributed archive ships no validation set, which is why the released
 `Train.py` ends up checkpointing on the test sets. If you split the 1450-image
 training pool yourself, put the held-out part in `dataset/ValidationDataset/`
-(`images/` and `masks/`, or `gts/` — both names are read) and everything below
+(`images/` and `masks/`, `gt/` or `gts/` — all three are read) and everything below
 picks it up:
 
 * `prepare_data.py --check` counts it, and reconciles the partition rather than
