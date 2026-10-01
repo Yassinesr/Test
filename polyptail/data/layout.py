@@ -185,9 +185,14 @@ def _diagnose_count(split: str, expected: int, paired: list,
 VALIDATION_SPLIT = "ValidationDataset"
 
 #: Directory names a mask folder travels under, in preference order.
-#: ``masks`` is what the reference code reads; ``gt`` and ``gts`` are what
-#: several polyp repositories ship and what a hand-assembled split often ends
-#: up with. Order is the tie-break when more than one is present.
+#: ``gt`` leads: where a split carries more than one, ``gt/`` is the one this
+#: project reads and the rest are ignored. ``masks`` stays in the list rather
+#: than being dropped, because the five distributed test splits ship under that
+#: name and nothing else would find them.
+#:
+#: The reference code hard-codes ``masks/``, so a split read from ``gt/`` here
+#: is one the original scripts cannot open. ``resolve_mask_dir`` says so every
+#: time it reads a directory by another name.
 MASK_DIR_NAMES = ("gt", "gts", "masks")
 
 

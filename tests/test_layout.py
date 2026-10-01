@@ -453,9 +453,10 @@ class TestMaskDirectoryNames:
         assert rep.counts["TestDataset/CVC-300"] == 60
         assert any(f"{alias}/ rather than masks/" in n for n in rep.notes)
 
-    def test_three_aliases_agreeing_pick_the_reference_spelling(self, tmp_path):
-        """Preference order is MASK_DIR_NAMES, so a copy under another name
-        never quietly becomes the one that gets hashed."""
+    def test_gt_wins_when_a_split_carries_several(self, tmp_path):
+        """MASK_DIR_NAMES is the preference order, so a copy under another
+        name never quietly becomes the one that gets hashed. gt/ leads it:
+        a split holding both is read from gt/, and masks/ is ignored."""
         names = [f"{i}.png" for i in range(1, 61)]
         root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
         split = root / "TestDataset/CVC-300"
@@ -465,7 +466,17 @@ class TestMaskDirectoryNames:
                 Image.new("L", (32, 24), 0).save(split / alias / n)
         rep = check_layout(root, splits=["TestDataset/CVC-300"])
         assert rep.ok, rep.summary()
-        assert any("Reading masks/" in n and "gt/, gts/ ignored" in n for n in rep.notes)
+        assert any("Reading gt/" in n and "gts/, masks/ ignored" in n for n in rep.notes)
+
+    def test_masks_alone_is_still_found(self, tmp_path):
+        """The five distributed test splits ship under masks/ and nothing
+        else, so demoting it must not lose them."""
+        names = [f"{i}.png" for i in range(1, 61)]
+        root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
+        rep = check_layout(root, splits=["TestDataset/CVC-300"])
+        assert rep.ok, rep.summary()
+        assert rep.counts["TestDataset/CVC-300"] == 60
+        assert not any("rather than masks/" in n for n in rep.notes)
 
     def test_two_aliases_without_masks_do_not_crash(self, tmp_path):
         """The earlier version hardcoded masks/ and gts/ in the both-exist
@@ -491,7 +502,7 @@ class TestMaskDirectoryNames:
         assert rep.counts["TestDataset/CVC-300"] == 60
         assert any("gts/ rather than masks/" in n for n in rep.notes)
 
-    def test_both_with_the_same_stems_reads_masks_and_says_so(self, tmp_path):
+    def test_both_with_the_same_stems_reads_the_preferred_one_and_says_so(self, tmp_path):
         names = [f"{i}.png" for i in range(1, 61)]
         root = build_named(tmp_path / "dataset", "TestDataset/CVC-300", names, names)
         gts = root / "TestDataset/CVC-300/gts"
@@ -500,7 +511,7 @@ class TestMaskDirectoryNames:
             Image.new("L", (32, 24), 0).save(gts / n)
         rep = check_layout(root, splits=["TestDataset/CVC-300"])
         assert rep.ok, rep.summary()
-        assert any("Reading masks/" in n for n in rep.notes)
+        assert any("Reading gts/" in n and "masks/ ignored" in n for n in rep.notes)
 
     def test_both_disagreeing_is_an_error_not_a_guess(self, tmp_path):
         names = [f"{i}.png" for i in range(1, 61)]
