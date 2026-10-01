@@ -40,7 +40,7 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 from PIL import Image
 
-from .layout import resolve_mask_dir
+from .layout import MASK_DIR_NAMES, resolve_mask_dir
 
 __all__ = [
     "SCHEMA",
@@ -238,6 +238,15 @@ class VerifyReport:
     file_hash_mismatch: list[str] = field(default_factory=list)
     pixel_hash_mismatch: list[str] = field(default_factory=list)
     extra: list[str] = field(default_factory=list)
+    moved: dict = field(default_factory=dict)
+    """Manifest path -> where that stem actually is now, when a mask directory
+    was renamed after freezing (``masks/`` to ``gt/``, say). Without this a
+    rename reads as data loss, and the two have very different fixes."""
+    changed: list = field(default_factory=list)
+    """One entry per pixel mismatch: what the manifest recorded against what is
+    on disk. A mask re-saved in another format and a mask re-annotated both
+    fail the hash; only the recorded size, mode and positive fraction separate
+    them, and the manifest already holds all three."""
 
     @property
     def ok(self) -> bool:
@@ -249,13 +258,76 @@ class VerifyReport:
         parts = [f"FAILED ({self.checked} files checked)"]
         for name, lst in (
             ("missing", self.missing),
-            ("file-hash mismatch", self.file_hash_mismatch),
-            ("pixel-hash mismatch (re-encoded)", self.pixel_hash_mismatch),
+            ("file-hash mismatch (re-encoded, or content changed -- see below)",
+             self.file_hash_mismatch),
+            ("pixel-hash mismatch (the DECODED pixels differ)", self.pixel_hash_mismatch),
             ("present but not in manifest", self.extra),
         ):
             if lst:
                 parts.append(f"  {name}: {len(lst)} e.g. {lst[:5]}")
+
+        if self.moved:
+            by_dir: dict = {}
+            for src, dst in self.moved.items():
+                by_dir.setdefault((str(Path(src).parent), str(Path(dst).parent)), 0)
+                by_dir[(str(Path(src).parent), str(Path(dst).parent))] += 1
+            for (was, now), n in sorted(by_dir.items(), key=lambda kv: -kv[1]):
+                parts.append(
+                    f"  -> {n} of the missing files are not gone: the same names are in {now}/ "
+                    f"rather than {was}/. That directory was renamed after the manifest was "
+                    f"frozen. Re-freeze; nothing is lost.")
+
+        if self.changed:
+            resized, resaved, rewritten, other = [], [], [], []
+            for c in self.changed:
+                if tuple(c["was_size"]) != tuple(c["now_size"]):
+                    resized.append(c)
+                elif c["was_frac"] is None:
+                    other.append(c)
+                elif abs(c["now_frac"] - c["was_frac"]) <= 1e-6:
+                    resaved.append(c)
+                else:
+                    rewritten.append(c)
+            parts.append("  what actually changed:")
+            if resaved:
+                modes = sorted({f"{c['was_mode']} -> {c['now_mode']}" for c in resaved})
+                parts.append(
+                    f"    {len(resaved)} mask(s): same size, same binary content, different "
+                    f"encoding ({', '.join(modes)}). Re-saved, not re-annotated -- re-freeze the "
+                    f"manifest and the protocol is unchanged.")
+            if rewritten:
+                ex = "; ".join(f"{c['path']} {c['was_frac']:.4f} -> {c['now_frac']:.4f}"
+                               for c in rewritten[:3])
+                parts.append(
+                    f"    {len(rewritten)} mask(s) cover a different fraction of the image: {ex}. "
+                    f"These are different annotations. Do not re-freeze until you know which "
+                    f"source is the right one.")
+            if resized:
+                c = resized[0]
+                parts.append(f"    {len(resized)} file(s) changed size, e.g. {c['path']} "
+                             f"{tuple(c['was_size'])} -> {tuple(c['now_size'])}.")
+            if other:
+                parts.append(f"    {len(other)} image file(s) differ in decoded pixels.")
         return "\n".join(parts)
+
+
+def _find_moved(root: Path, rel: str) -> Optional[str]:
+    """The same filename under a differently-spelled mask directory, or None.
+
+    Renaming ``masks/`` to ``gt/`` after freezing makes every mask in that
+    split read as missing, which looks exactly like losing them. It is worth a
+    directory probe to tell a rename from a deletion.
+    """
+    parent = Path(rel).parent
+    if parent.name not in MASK_DIR_NAMES:
+        return None
+    for alt in MASK_DIR_NAMES:
+        if alt == parent.name:
+            continue
+        cand = root / parent.parent / alt / Path(rel).name
+        if cand.is_file():
+            return str(cand.relative_to(root)).replace(os.sep, "/")
+    return None
 
 
 def verify_manifest(root: Path, manifest: dict, check_pixels: bool = True) -> VerifyReport:
@@ -274,15 +346,27 @@ def verify_manifest(root: Path, manifest: dict, check_pixels: bool = True) -> Ve
                 rep.checked += 1
                 if not p.is_file():
                     rep.missing.append(rel)
+                    found = _find_moved(root, rel)
+                    if found is not None:
+                        rep.moved[rel] = found
                     continue
                 if sha256_file(p) != fsha:
                     rep.file_hash_mismatch.append(rel)
                     if not check_pixels:
                         continue
                 if check_pixels:
-                    info, _ = _describe(p, as_mask=as_mask)
+                    info, arr = _describe(p, as_mask=as_mask)
                     if info["pixel_sha256"] != psha:
                         rep.pixel_hash_mismatch.append(rel)
+                        rep.changed.append({
+                            "path": rel,
+                            "was_size": tuple(it.mask_size if as_mask else it.image_size),
+                            "now_size": tuple(info["size"]),
+                            "was_mode": it.mask_mode if as_mask else it.image_mode,
+                            "now_mode": info["mode"],
+                            "was_frac": it.mask_positive_frac if as_mask else None,
+                            "now_frac": (float(binarize_mask(arr).mean()) if as_mask else None),
+                        })
     for split in manifest["splits"]:
         for sub in ("images", "masks"):
             d = root / split / sub

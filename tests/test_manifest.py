@@ -85,6 +85,75 @@ class TestVerify:
         assert "OK" in verify_manifest(root, manifest).summary()
 
 
+class TestVerifyExplainsTheDifference:
+    """A failed verify names three things that need different responses: a
+    directory renamed, a mask re-saved, a mask re-annotated. All three fail the
+    same hash, so the count alone sends you the wrong way."""
+
+    def test_a_renamed_mask_directory_is_not_reported_as_lost(self, synthetic_dataset):
+        """masks/ -> gt/ makes every mask in the split read as missing, which
+        looks exactly like deleting them and has a completely different fix."""
+        root, manifest = synthetic_dataset
+        (root / "TrainDataset" / "masks").rename(root / "TrainDataset" / "gt")
+        rep = verify_manifest(root, manifest)
+        assert not rep.ok and len(rep.missing) == 12
+        assert len(rep.moved) == 12
+        text = rep.summary()
+        assert "are not gone" in text and "TrainDataset/gt" in text
+        assert "renamed after the manifest was frozen" in text
+
+    def test_a_re_saved_mask_is_called_a_re_save(self, synthetic_dataset):
+        """A mask re-saved at a different value level -- 255 down to 200 --
+        has different decoded pixels and the same binary content, because
+        ``binarize_mask`` thresholds at >127. Re-freeze and carry on.
+
+        Worth recording what does *not* land here: an undithered ``L`` to
+        ``1`` conversion of a hard-edged mask is pixel-*identical*, because the
+        hash is taken after converting back to ``L`` and 0/255 round-trips
+        exactly. That shows up as a file-hash mismatch alone. So a pixel
+        mismatch after such a conversion means the edges were not hard, or the
+        convert dithered -- either way information was lost.
+        """
+        root, manifest = synthetic_dataset
+        p = root / "TrainDataset" / "masks" / "000.png"
+        arr = np.asarray(Image.open(p)).copy()
+        arr[arr > 127] = 200
+        Image.fromarray(arr).save(p)
+        rep = verify_manifest(root, manifest)
+        assert rep.pixel_hash_mismatch, "a changed value level must change the decoded bytes"
+        text = rep.summary()
+        assert "same binary content" in text
+        assert "re-saved, not re-annotated" in text.lower()
+        assert "different annotations" not in text
+
+    def test_a_re_annotated_mask_is_called_different_annotations(self, synthetic_dataset):
+        """The one that must not be re-frozen over: the labels moved."""
+        root, manifest = synthetic_dataset
+        p = root / "TrainDataset" / "masks" / "000.png"
+        arr = np.asarray(Image.open(p)).copy()
+        arr[:6, :6] = 255                      # grow the mask
+        Image.fromarray(arr).save(p)
+        rep = verify_manifest(root, manifest)
+        assert rep.pixel_hash_mismatch
+        text = rep.summary()
+        assert "cover a different fraction" in text
+        assert "different annotations" in text
+        assert "Do not re-freeze" in text
+
+    def test_the_label_does_not_call_a_pixel_change_a_re_encode(self, synthetic_dataset):
+        """A re-encode is the case where the file hash moves and the pixel
+        hash does not. Calling a pixel mismatch 're-encoded' says harmless
+        when it means the content changed."""
+        root, manifest = synthetic_dataset
+        p = root / "TrainDataset" / "masks" / "000.png"
+        arr = np.asarray(Image.open(p)).copy()
+        arr[:6, :6] = 255
+        Image.fromarray(arr).save(p)
+        text = verify_manifest(root, manifest).summary()
+        assert "pixel-hash mismatch (the DECODED pixels differ)" in text
+        assert "pixel-hash mismatch (re-encoded)" not in text
+
+
 class TestIO:
     def test_json_and_sha256_roundtrip(self, synthetic_dataset, tmp_path):
         root, manifest = synthetic_dataset
