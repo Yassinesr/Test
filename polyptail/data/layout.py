@@ -188,7 +188,7 @@ VALIDATION_SPLIT = "ValidationDataset"
 #: ``masks`` is what the reference code reads; ``gt`` and ``gts`` are what
 #: several polyp repositories ship and what a hand-assembled split often ends
 #: up with. Order is the tie-break when more than one is present.
-MASK_DIR_NAMES = ("masks", "gt", "gts")
+MASK_DIR_NAMES = ("gt", "gts", "masks")
 
 
 class AmbiguousMaskDir(Exception):
