@@ -315,7 +315,12 @@ def falsification_verdict(
     c1 = {"triggered": False, "detail": "ETIS comparison unavailable"}
     if ETIS in dice_cmp:
         it = interval(dice_cmp[ETIS])
-        no_dice_gain = (it.mean <= 0.0) and (it.lo <= 0.0 <= it.hi)
+        # "No gain" is the complement of a significant gain.  The earlier
+        # form, mean <= 0 AND interval straddling zero, had two holes: a
+        # significant *loss* (interval entirely below zero) did not count as
+        # "no gain", and neither did a positive point estimate whose interval
+        # included zero.  Both let a method that does nothing for ETIS pass C1.
+        no_dice_gain = not it.significantly_positive
         tf = tail_frac.get(ETIS)
         drop = float("nan")
         if tf:

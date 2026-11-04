@@ -367,15 +367,35 @@ def verify_manifest(root: Path, manifest: dict, check_pixels: bool = True) -> Ve
                             "was_frac": it.mask_positive_frac if as_mask else None,
                             "now_frac": (float(binarize_mask(arr).mean()) if as_mask else None),
                         })
+    # Extras are found by *resolved* path: a test split carries ``masks -> gt``
+    # so that other code can open it by the reference name, and the manifest
+    # lists each file once, under whichever name it was frozen.  The same
+    # file reached through the other name is not an extra.
+    listed_real = set()
+    for rel in listed:
+        try:
+            listed_real.add((root / rel).resolve(strict=True))
+        except OSError:
+            pass
     for split in manifest["splits"]:
-        for sub in ("images", "masks"):
-            d = root / split / sub
-            if not d.is_dir():
+        base = root / split
+        try:
+            msk_dir, _ = resolve_mask_dir(base)
+        except Exception:
+            msk_dir = None
+        for d in (base / "images", msk_dir):
+            if d is None or not d.is_dir():
                 continue
             for p in sorted(d.iterdir()):
                 if p.suffix.lower() not in IMAGE_EXTS or not p.is_file():
                     continue
                 rel = str(p.relative_to(root)).replace(os.sep, "/")
-                if rel not in listed:
-                    rep.extra.append(rel)
+                if rel in listed:
+                    continue
+                try:
+                    if p.resolve(strict=True) in listed_real:
+                        continue
+                except OSError:
+                    pass
+                rep.extra.append(rel)
     return rep

@@ -80,6 +80,31 @@ class TestVerify:
         rep = verify_manifest(root, manifest)
         assert not rep.ok and rep.extra
 
+    def test_a_second_name_for_the_same_mask_dir_is_not_an_extra(self, synthetic_dataset):
+        """The test splits ship ``masks -> gt`` so the reference code can open
+        them by the name it hard-codes.  The manifest lists each file once;
+        reaching the same file through the other name is not an extra."""
+        root, manifest = synthetic_dataset
+        split = root / "TestDataset" / "Fake"
+        (split / "masks").rename(split / "gt")
+        (split / "masks").symlink_to("gt", target_is_directory=True)
+        rep = verify_manifest(root, manifest)
+        assert rep.ok, rep.summary()
+
+    def test_images_symlinked_under_a_mask_name_is_not_read_as_ground_truth(self, synthetic_dataset):
+        """``TrainDataset/images -> gt`` puts the photos under a name the
+        resolver prefers.  Freezing must still hash masks/, and verifying the
+        result must still pass."""
+        from polyptail.data.manifest import build_manifest
+        root, _ = synthetic_dataset
+        split = root / "TrainDataset"
+        (split / "images").rename(split / "gt")
+        (split / "images").symlink_to("gt", target_is_directory=True)
+        manifest = build_manifest(root, ["TrainDataset"])
+        masks = {it["mask"].split("/")[1] for it in manifest["splits"]["TrainDataset"]["items"]}
+        assert masks == {"masks"}
+        assert verify_manifest(root, manifest).ok
+
     def test_summary_is_human_readable(self, synthetic_dataset):
         root, manifest = synthetic_dataset
         assert "OK" in verify_manifest(root, manifest).summary()

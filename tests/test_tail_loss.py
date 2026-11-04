@@ -165,16 +165,50 @@ class TestGradient:
             totals.append(float(d.grad.sum()))
         assert totals[0] == pytest.approx(totals[1], rel=1e-6)
 
-    def test_cap_removes_gradient_above_the_cap(self):
+    def test_hard_cap_removes_gradient_above_the_cap(self):
         gen = torch.Generator().manual_seed(17)
-        m = warm(make("gpd", exceedance_cap=0.05), gen)
+        m = warm(make("gpd", exceedance_cap=0.05, cap_mode="hard"), gen)
         d = torch.clamp(torch.randn(64, generator=gen) * 0.15 + 0.3, 0.0, 1.0)
         d[0] = 1.0  # a mis-annotated image
         d = d.requires_grad_(True)
         loss, stats = m(d)
-        if stats["tail/active"]:
-            loss.backward()
-            assert float(d.grad[0]) == 0.0
+        assert stats["tail/active"]
+        loss.backward()
+        assert float(d.grad[0]) == 0.0
+
+    def test_soft_cap_bounds_the_worst_image_without_silencing_it(self):
+        """The default cap keeps a gradient on the frame it bounds: a suspect
+        label should pull less, not vanish from the objective."""
+        gen = torch.Generator().manual_seed(17)
+        m = warm(make("gpd", exceedance_cap=0.05), gen)
+        d = torch.clamp(torch.randn(64, generator=gen) * 0.15 + 0.3, 0.0, 1.0)
+        # Two caps past the threshold: tanh'(2) ~ 0.07, so the pull is small
+        # but present.  (At fourteen caps past it, as the hard-cap fixture
+        # uses, sech^2 underflows float32 and the two modes coincide -- the
+        # soft cap is a bound on influence, not a licence for any value.)
+        d[0] = m.threshold + 0.10
+        d = d.requires_grad_(True)
+        loss, stats = m(d)
+        assert stats["tail/active"]
+        loss.backward()
+        g = d.grad
+        assert float(g[0]) > 0.0
+        live = (d.detach() > stats["tail/u"]).nonzero().flatten().tolist()
+        others = [i for i in live if i != 0 and float(g[i]) > 0]
+        assert others, "fixture needs at least one other live exceedance"
+        assert float(g[0]) < max(float(g[i]) for i in others)
+
+    def test_floor_fraction_is_reported_for_gpd_only(self):
+        gen = torch.Generator().manual_seed(3)
+        for mode, expect_zero in (("gpd", False), ("ohem", True), ("cvar", True)):
+            m = warm(make(mode), gen)
+            d = torch.clamp(torch.randn(64, generator=gen) * 0.15 + 0.3, 0.0, 1.0)
+            _, stats = m(d.requires_grad_(True))
+            assert stats["tail/active"]
+            frac = stats["tail/w_floor_frac"]
+            assert 0.0 <= frac <= 1.0
+            if expect_zero:
+                assert frac == 0.0
 
 
 class TestModes:
@@ -227,6 +261,10 @@ class TestValidation:
     def test_rejects_alpha_not_below_p(self):
         with pytest.raises(ValueError):
             TailConfig(mode="gpd", p=0.02, alpha=0.15)
+
+    def test_rejects_unknown_cap_mode(self):
+        with pytest.raises(ValueError):
+            TailConfig(exceedance_cap=0.3, cap_mode="clip")
 
     def test_rejects_unknown_mode(self):
         with pytest.raises(ValueError):

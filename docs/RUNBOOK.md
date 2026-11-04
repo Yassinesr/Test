@@ -495,6 +495,12 @@ Run it under `tmux` or `screen`. Three runs is roughly a day and a half.
 
 ## Step 9 — Check A0 lands in the band. Stop if it does not.
 
+> **On the re-annotated split used in this repository (decided 2026-11-04):** the
+> training labels are the user's improved masks, so the published band below is
+> unreachable by construction and a miss does not indicate a harness fault. Skip
+> this gate; the comparison that matters is against models retrained on the same
+> manifest, and the internal A0-vs-A1 contrast. See `CLAUDE.md`.
+
 ```bash
 python - <<'PY'
 import json, pathlib

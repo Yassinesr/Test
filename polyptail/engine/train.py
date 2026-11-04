@@ -229,8 +229,8 @@ def train(cfg: Config) -> dict:
         base_meter, tail_meter = AvgMeter(), AvgMeter()
         tail_meters = {k: AvgMeter() for k in
                        ("u", "xi", "xi_raw", "beta", "q_hat", "n_pool", "n_live",
-                        "n_live_active", "w_sum", "degenerate", "xi_clamped",
-                        "deficit_mean")}
+                        "n_live_active", "w_sum", "w_floor_frac", "degenerate",
+                        "xi_clamped", "deficit_mean")}
         active_meter = AvgMeter()
         epoch_deficits: dict[int, float] = {}
         last_stats: dict = {}
@@ -318,7 +318,10 @@ def train(cfg: Config) -> dict:
         # Early on a low fraction is a transient, because u is estimated from a
         # buffer of older, larger deficits and a fast-improving model rarely
         # exceeds it, so the check waits for warm-up to finish.
-        if use_tail and cfg.pot.tail.mode != "none":
+        # ``use_tail`` is a per-scale flag and is stale here (it holds the last
+        # scale's value, which is False whenever 1.25 is the last scale and
+        # tail scales are unit), so the check keys on the mode instead.
+        if cfg.pot.tail.mode != "none":
             warmup_epochs = math.ceil(cfg.pot.tail.warmup_frac * cfg.optim.epochs)
             expected = 100 * (1 - (1 - cfg.pot.tail.p) ** cfg.optim.batch_size)
             if epoch > max(1, warmup_epochs) and active_meter.avg < 0.5:
@@ -338,11 +341,12 @@ def train(cfg: Config) -> dict:
         if tail_meters["xi"].count:
             logger.info(
                 "epoch %3d summary: base %.4f tail %.5f | active %.2f of calls, "
-                "u=%.4f xi=%.3f (raw %.3f) beta=%.4f q_hat=%.4f degenerate=%.2f clamped=%.2f",
+                "u=%.4f xi=%.3f (raw %.3f) beta=%.4f q_hat=%.4f degenerate=%.2f clamped=%.2f "
+                "floored=%.2f",
                 epoch, base_meter.avg, tail_meter.avg, active_meter.avg,
                 tail_meters["u"].avg, tail_meters["xi"].avg, tail_meters["xi_raw"].avg,
                 tail_meters["beta"].avg, tail_meters["q_hat"].avg, tail_meters["degenerate"].avg,
-                tail_meters["xi_clamped"].avg,
+                tail_meters["xi_clamped"].avg, tail_meters["w_floor_frac"].avg,
             )
             if tail_meters["xi_clamped"].avg > 0.2:
                 logger.warning(

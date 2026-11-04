@@ -175,6 +175,13 @@ Measured profiles (weights normalised to mean 1, by rank):
 
 Ablation A3 sits at exactly 1.00 in every cell, always.
 
+One honest caveat on the ξ̂ < 0 rows: the rank-0% entries are *after* the
+weight floor. At ξ̂ ≈ −0.5 the raw return-level sensitivity is negative on
+roughly the smallest fifth to third of the pool, and the floor turns those into
+zeros. The effective A1 weighting in the usual regime is therefore "linearly
+rising over the top two-thirds of the exceedance pool, zero below". Every run
+logs that share as `tail_w_floor_frac`; quote it alongside ξ̂.
+
 This yields a **testable sub-hypothesis** that costs nothing to check: the
 A1 − A3 gap should track how far ξ̂ sits from zero during training. Every run
 logs `tail_xi` per epoch, so it can be read off directly. If ξ̂ hovers at zero
@@ -232,7 +239,7 @@ meaning anything.
 
 | failure mode | mitigation in this implementation |
 |---|---|
-| **Label-noise amplification** — the worst-loss images may simply be mis-annotated | A6 caps per-image exceedances; every run writes `per_image_deficits.csv` naming which training images populate the tail each epoch. If the same handful of stems dominate, inspect them before believing anything else. Note also that heavy fitted tails automatically down-weight the extremes (§4). |
+| **Label-noise amplification** — the worst-loss images may simply be mis-annotated | A6 bounds each image's *gradient* contribution with a soft cap, `cap · tanh(e/cap)`, so a suspect frame pulls less rather than not at all; the GPD is fitted to the uncapped pool, because capping the sample drives ξ̂ into the clamp and inverts the weighting. Every run writes `per_image_deficits.csv` naming which training images populate the tail each epoch. If the same handful of stems dominate, inspect them before believing anything else. Note also that heavy fitted tails automatically down-weight the extremes (§4). |
 | **Estimator instability** — `ξ` is high-variance in small samples | The pooled buffer supplies ~77 exceedances per step instead of ~2. `buffer_size` is the control: measured, 512 gives fitted shapes moving smoothly across −0.36 to −0.68, while 128 (~19 exceedances) swings from +0.06 to −1.9 epoch to epoch and starts hitting the clamp. `tail_xi_raw`, `tail_xi_clamped` and `tail_degenerate` are logged every epoch; the PWM fit falls back to the exponential (`ξ=0, β=a_0`) when the denominator collapses. |
 | **`ξ ≥ 1` degeneracy** — no finite GPD mean | clamped at 0.7, with the binding rate logged. |
 | **Optimisation conflict** — the tail term suppresses gradient on easy images | `λ` warm-up over the first 20%; `normalize: sum1` keeps `λ` from drifting with ξ̂. |

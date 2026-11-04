@@ -1,5 +1,7 @@
 """Paired intervals and the mechanical falsification verdict."""
 
+from __future__ import annotations
+
 import numpy as np
 import pytest
 
@@ -126,8 +128,26 @@ class TestVerdict:
         v = falsification_verdict(cm, tail)
         assert not v.criteria["C1 no ETIS gain in mean or in tail mass"]["triggered"]
 
+    def test_c1_fires_when_etis_gets_significantly_worse(self):
+        """A method that *hurts* ETIS has, a fortiori, not helped it.  The
+        earlier condition required the interval to straddle zero, so a loss
+        with a tight interval slipped through as "not no-gain"."""
+        cm = cmp_of({ETIS: [0.790, 0.792, 0.788]}, {ETIS: [0.760, 0.763, 0.758]})
+        tail = {ETIS: {"a": [0.30] * 3, "b": [0.30] * 3}}
+        v = falsification_verdict(cm, tail)
+        assert v.criteria["C1 no ETIS gain in mean or in tail mass"]["triggered"]
+        assert v.rejected
+
+    def test_c1_fires_on_a_positive_mean_whose_interval_includes_zero(self):
+        cm = cmp_of({ETIS: [0.79, 0.78, 0.80]}, {ETIS: [0.795, 0.782, 0.805]})
+        tail = {ETIS: {"a": [0.30] * 3, "b": [0.30] * 3}}
+        assert falsification_verdict(cm, tail).criteria[
+            "C1 no ETIS gain in mean or in tail mass"]["triggered"]
+
     def test_c1_does_not_fire_on_a_clear_mean_gain(self):
-        cm = cmp_of({ETIS: [0.700, 0.702, 0.701]}, {ETIS: [0.760, 0.762, 0.761]})
+        # Jittered, as every fixture here must be: a constant shift has zero
+        # paired spread, which is degenerate and therefore never significant.
+        cm = cmp_of({ETIS: [0.700, 0.702, 0.701]}, {ETIS: [0.760, 0.764, 0.759]})
         tail = {ETIS: {"a": [0.30] * 3, "b": [0.30] * 3}}
         assert not falsification_verdict(cm, tail).criteria[
             "C1 no ETIS gain in mean or in tail mass"]["triggered"]

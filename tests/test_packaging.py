@@ -13,6 +13,8 @@ exactly that reason, and CI runs the suite under each), so the ceiling is a
 torch constraint, not ours -- but it has to be stated identically everywhere.
 """
 
+from __future__ import annotations
+
 import re
 from pathlib import Path
 

@@ -523,3 +523,41 @@ class TestMaskDirectoryNames:
         rep = check_layout(root, splits=["TestDataset/CVC-300"])
         assert not rep.ok
         assert any("cannot say which one produced it" in e for e in rep.errors)
+
+
+class TestMaskDirIsNotTheImagesDir:
+    """``images -> gt`` is a layout other code in the user's tree depends on,
+    so the photos really do live under a name the resolver would otherwise
+    take for ground truth.  The resolver has to look through the symlink."""
+
+    def test_images_symlinked_to_gt_leaves_masks_as_the_mask_dir(self, tmp_path):
+        root = build(tmp_path / "dataset", ALL)
+        split = root / "TrainDataset"
+        (split / "images").rename(split / "gt")
+        (split / "images").symlink_to("gt", target_is_directory=True)
+        rep = check_layout(root)
+        assert rep.ok, rep.summary()
+        assert not any("Reading gt/" in n for n in rep.notes)
+        from polyptail.data.layout import resolve_mask_dir
+        chosen, _ = resolve_mask_dir(split)
+        assert chosen.name == "masks"
+
+    def test_masks_symlinked_to_gt_is_one_directory_not_two(self, tmp_path):
+        root = build(tmp_path / "dataset", ALL)
+        split = root / "TestDataset/Kvasir"
+        (split / "masks").rename(split / "gt")
+        (split / "masks").symlink_to("gt", target_is_directory=True)
+        rep = check_layout(root)
+        assert rep.ok, rep.summary()
+        assert not any("masks/ ignored" in n for n in rep.notes)
+
+    def test_a_mask_dir_full_of_photographs_is_an_error(self, tmp_path):
+        root = build(tmp_path / "dataset", ALL)
+        split = root / "TrainDataset"
+        import numpy as np
+        rng = np.random.default_rng(0)
+        for p in sorted((split / "masks").iterdir()):
+            Image.fromarray(rng.integers(0, 256, (24, 32, 3), dtype=np.uint8)).save(p)
+        rep = check_layout(root)
+        assert not rep.ok
+        assert any("photographs, not labels" in e for e in rep.errors)

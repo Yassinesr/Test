@@ -207,6 +207,12 @@ batch size and the size of your training split.
 
 ## 6. Run the baseline — this is the gate
 
+> **On the re-annotated split used in this repository (decided 2026-11-04):** the
+> training labels are the user's improved masks, so the published band below is
+> unreachable by construction and a miss does not indicate a harness fault. Skip
+> this gate; the comparison that matters is against models retrained on the same
+> manifest, and the internal A0-vs-A1 contrast. See `CLAUDE.md`.
+
 ```bash
 python tools/run_ablation.py --configs configs/a0_baseline.yaml \
     --seeds 0 1 2 --out-dir runs/main

@@ -29,6 +29,9 @@ Read `docs/PROTOCOL.md` before touching anything that produces a number.
   sets it once; every arm inherits. A test asserts they agree.
 - **Never report `lam` as configured without checking `active`.** The weight a
   run applies is `lam * active`.
+- **Never read C1 as "mean ≤ 0 and CI straddles zero".** It is "not
+  significantly positive": a significant ETIS *loss* triggers it, and so does
+  a positive mean whose interval includes zero. The earlier form let both pass.
 
 ## What is already known about this dataset — don't re-derive it
 
@@ -46,12 +49,21 @@ From `manifests/collisions.json` (committed):
   medians *down a column*, not against 32: ETIS (a separate corpus) sits at
   14.0, so 10.0 is sequence sharing, not a broken partition.
 
-**Open issue:** all 1288 `TrainDataset` masks were converted `L -> 1` and 1287
-changed binary content (positive fraction drifted both ways). An undithered
-`L -> 1` of a hard-edged mask is pixel-*identical*, so a pixel mismatch there
-means soft edges or a dithered convert — information was lost. Confirm which
-directory `prepare_data.py --check` reads for TrainDataset before trusting any
-training run.
+**The training labels are the user's own, re-annotated set (decided
+2026-11-04).** `TrainDataset/masks/` and `ValidationDataset/gt/` hold improved
+masks (mode `1`), and their positive fractions differ from the distributed
+labels both ways, by up to 0.47 of an image. That is intentional, not drift.
+Two consequences: the published Polyp-PVT numbers are **not** a reference for
+any run on this split, and every comparison model must be retrained on this
+same manifest before it is compared. The five test splits are untouched and
+still match the distributed labels pixel for pixel.
+
+**Layout that must not be renamed** — other repositories read it:
+`TrainDataset/images -> gt` (the photos, under a second name) and, in every
+test split, `masks -> gt` (the labels, under a second name). The mask resolver
+looks through symlinks, so `gt/` beside an `images` link to it is never read
+as ground truth, and `prepare_data.py --check` refuses any mask directory that
+decodes to photographs. If `TrainDataset` ever reports "Reading gt/", stop.
 
 ## Commands
 
@@ -76,6 +88,7 @@ Re-freeze and commit together.
 | `active` | fraction of steps the tail term fired. Low early is a transient (`u` lags a falling loss). Past warm-up, under 0.5 is warned about. |
 | `degenerate` | PWM denominator collapsed. Occasional fine; common means the pool is too small. |
 | `xi` | roughly −0.3 to −0.8 for a soft-Dice deficit. |
+| `w_floor_frac` | share of the pooled weights the floor lifted to zero. At ξ̂ ≈ −0.5 expect 0.2–0.35: A1 is then weighting the top two-thirds of the pool, and the card's "weights rise with rank" claim holds on that part only. Report it. |
 
 Timing: ~65 s/epoch at batch 16 over 1288 images on a 3080 Ti (fp16), so ~2 h
 per 100-epoch run, ~18 h for three seeds of A0+A1+A2. Determinism: a fixed seed
@@ -84,18 +97,13 @@ has no deterministic CUDA kernel. Quote a tolerance, never equality.
 
 ## The gate
 
-Before any ablation, one A0 run on the whole pool reproduces the published
-numbers, because a 1288-image run selected on validation differs from them in
-two ways at once:
-
-```bash
-python tools/run_ablation.py --configs configs/a0_baseline.yaml --seeds 0 \
-    --out-dir runs/gate data.extra_train_splits='["ValidationDataset"]' \
-    data.val_split=null run.select=last
-```
-
-Check `dice_sweep` (not `dice`) against 0.917 / 0.937 / 0.808 / 0.900 / 0.787,
-±0.005 per split. Outside the band you are measuring the harness.
+The published-number gate in the README does not apply here: the training
+labels are re-annotated, so no run on this manifest can land in the Polyp-PVT
+band and a miss says nothing about the harness. The harness check is instead
+A0 against the **retrained** comparison models on the same manifest, and the
+internal A0-vs-A1 contrast, where both arms read identical data. Record this
+in any table caption: "trained on the re-annotated 1288/162 split; published
+rows are not comparable".
 
 ## Conventions
 

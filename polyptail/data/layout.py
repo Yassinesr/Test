@@ -195,6 +195,11 @@ VALIDATION_SPLIT = "ValidationDataset"
 #: time it reads a directory by another name.
 MASK_DIR_NAMES = ("gt", "gts", "masks")
 
+#: A label map decoded to 8-bit grey has at most a few levels (0/255, 0/1,
+#: anti-aliased edges).  A photograph has hundreds.  The threshold is wide
+#: enough that a softly resampled mask passes and a colonoscopy frame cannot.
+MAX_MASK_GREY_LEVELS = 64
+
 
 class AmbiguousMaskDir(Exception):
     """More than one mask directory exists and they hold different things."""
@@ -208,6 +213,24 @@ def resolve_mask_dir(base: Path) -> tuple:
     number came from, guessing is worse than stopping.
     """
     present = [base / n for n in MASK_DIR_NAMES if (base / n).is_dir()]
+    # A split may carry ``images -> gt`` (the photos under a second name) or
+    # ``masks -> gt`` (the labels under a second name).  Both are symlinks
+    # and both are deliberate: other code in the user's tree hard-codes one
+    # name or the other.  Resolve them rather than reading names, so that a
+    # candidate that *is* the images directory is never taken for ground
+    # truth, and two names for one directory are counted once.
+    img_real = _real(base / "images")
+    seen: set = set()
+    kept = []
+    for d in present:
+        real = _real(d)
+        if img_real is not None and real == img_real:
+            continue
+        if real in seen:
+            continue
+        seen.add(real)
+        kept.append(d)
+    present = kept
     if not present:
         return None, None
     chosen = present[0]
@@ -306,6 +329,13 @@ class LayoutReport:
         return "\n".join(lines)
 
 
+def _real(d: Path):
+    try:
+        return d.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+
+
 def _files(d: Path) -> list[Path]:
     return sorted(p for p in d.iterdir() if p.is_file() and not p.name.startswith("."))
 
@@ -395,13 +425,20 @@ def _check_split(root: Path, split: str, rep: LayoutReport) -> None:
         )
 
     # Sizes, and a cheap sanity check that masks are masks.
-    mismatched, degenerate = [], []
-    for stem in paired:
+    mismatched, photo_like = [], []
+    for k, stem in enumerate(paired):
         try:
             with Image.open(img_by_stem[stem]) as im:
                 isize = im.size
             with Image.open(msk_by_stem[stem]) as mm:
                 msize = mm.size
+                # Decode a sample of the masks.  A label map has a handful of
+                # grey levels; a colonoscopy photo has hundreds.  Checked on
+                # every 64th pair so that a 1288-image split costs ~20 decodes.
+                if k % 64 == 0:
+                    levels = len(set(mm.convert("L").getdata()))
+                    if levels > MAX_MASK_GREY_LEVELS:
+                        photo_like.append((stem, levels))
         except Exception as exc:  # unreadable file
             rep.errors.append(f"{split}/{stem}: cannot be opened ({exc})")
             continue
@@ -411,6 +448,15 @@ def _check_split(root: Path, split: str, rep: LayoutReport) -> None:
         rep.errors.append(
             f"{split}: {len(mismatched)} pair(s) where image and mask differ in size, "
             f"e.g. {mismatched[:4]}. The archive did not unpack cleanly; re-download."
+        )
+    if photo_like:
+        ex = ", ".join(f"{s} ({n} grey levels)" for s, n in photo_like[:3])
+        rep.errors.append(
+            f"{split}: {len(photo_like)} sampled mask(s) under {msk_dir.name}/ decode to "
+            f"hundreds of grey levels, e.g. {ex}. These are photographs, not labels: "
+            f"{msk_dir.name}/ is being read as ground truth but holds images. A manifest "
+            f"frozen from it would train on the wrong files and the positive fraction "
+            f"would be meaningless."
         )
 
     if split in EXPECTED_COUNTS and len(paired) != EXPECTED_COUNTS[split]:

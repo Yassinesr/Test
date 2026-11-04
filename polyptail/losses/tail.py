@@ -136,8 +136,29 @@ class TailConfig:
     not depend on ``buffer_size``."""
 
     exceedance_cap: Optional[float] = None
-    """A6.  Cap each exceedance at this value before weighting, bounding the
-    influence of any single (possibly mis-annotated) image.  ``None`` = off."""
+    """A6.  Bound what any single (possibly mis-annotated) image can
+    contribute to the *gradient*.  ``None`` = off.
+
+    The cap is applied on the gradient path only.  The pooled sample the GPD
+    is fitted to is left uncapped, for two reasons.  The fit is detached and
+    PWM is linear in the order statistics, so one frame already moves it by
+    at most ``1/n`` of a bounded deficit -- there is nothing to protect.  And
+    capping the sample itself is actively harmful: it squeezes every
+    exceedance into ``[0, cap)``, the fitted tail then looks hard-bounded at
+    the cap, ``xi`` collapses towards -1 and below, the lower clamp binds,
+    the shape gradient switches off and the weight profile inverts (see
+    ``polyptail/evt.py``).  Measured on the unit-test fixture, a sample cap
+    drove ``xi`` to the clamp and floored 30% of the weights."""
+
+    cap_mode: str = "soft"
+    """soft | hard.  How ``exceedance_cap`` bounds the gradient.
+
+    ``hard`` is ``min(e, cap)``: an image past the cap receives *no* tail
+    gradient at all, which turns "bound the influence of a suspect frame"
+    into "ignore it entirely" -- the opposite of robust.
+    ``soft`` is ``cap * tanh(e / cap)``: the same bound, with a gradient that
+    decays smoothly (``sech^2``) instead of switching off, so the worst
+    frames still pull, just not without limit."""
 
     cvar_selection: str = "pool"
     """pool | live -- which set the empirical top-``alpha/p`` is taken from
@@ -152,6 +173,10 @@ class TailConfig:
             raise ValueError(f"unknown normalize {self.normalize!r}")
         if self.cvar_selection not in ("pool", "live"):
             raise ValueError(f"unknown cvar_selection {self.cvar_selection!r}")
+        if self.cap_mode not in ("soft", "hard"):
+            raise ValueError(f"unknown cap_mode {self.cap_mode!r}")
+        if self.exceedance_cap is not None and self.exceedance_cap <= 0.0:
+            raise ValueError("exceedance_cap must be positive")
         if self.min_buffer > self.buffer_size:
             raise ValueError("min_buffer must not exceed buffer_size")
 
@@ -247,25 +272,42 @@ class TailRiskLoss(nn.Module):
             m = self.cfg.ema_momentum
             self._u.mul_(1.0 - m).add_(m * float(q))
 
+    def _cap(self, e: Tensor) -> Tensor:
+        c = float(self.cfg.exceedance_cap)
+        if self.cfg.cap_mode == "hard":
+            return e.clamp(max=c)
+        return c * torch.tanh(e / c)
+
     # ------------------------------------------------------------- weights
 
-    def _weights(self, e_pool_sorted: Tensor, fit: Optional[GPDFit]) -> Tensor:
+    def _weights(self, e_pool_sorted: Tensor, fit: Optional[GPDFit]) -> tuple[Tensor, float]:
+        """Weight vector over the sorted pool, and the fraction of it that the
+        floor had to lift.  The second number is the honest size of the
+        "weights rise with rank" claim: at strongly negative shapes the raw
+        return-level sensitivity is negative on the smallest exceedances, and
+        the floor turns those into zeros.  A run that floors a third of its
+        pool is weighting the top two-thirds, and should say so."""
         cfg = self.cfg
         n = e_pool_sorted.numel()
         if cfg.mode == "ohem":
-            return torch.full((n,), 1.0 / n, device=e_pool_sorted.device, dtype=e_pool_sorted.dtype)
+            w = torch.full((n,), 1.0 / n, device=e_pool_sorted.device, dtype=e_pool_sorted.dtype)
+            return w, 0.0
         if cfg.mode == "cvar":
             frac = cfg.alpha / cfg.p
             m = max(1, int(round(frac * n)))
             w = torch.zeros(n, device=e_pool_sorted.device, dtype=e_pool_sorted.dtype)
             w[n - m:] = 1.0 / m  # sorted ascending -> the last m are the largest
-            return w
+            return w, 0.0
         assert cfg.mode == "gpd" and fit is not None
-        return pot_return_level_weights(
+        raw = pot_return_level_weights(
             e_pool_sorted, fit, p=cfg.p, alpha=cfg.alpha,
-            xi_mode=cfg.xi_mode, weight_floor=cfg.weight_floor,
+            xi_mode=cfg.xi_mode, weight_floor=None,
             xi_min=cfg.xi_min, xi_max=cfg.xi_max,
         )
+        if cfg.weight_floor is None:
+            return raw, 0.0
+        floored = float((raw < cfg.weight_floor).float().mean())
+        return raw.clamp_min(cfg.weight_floor), floored
 
     # ------------------------------------------------------------- forward
 
@@ -321,10 +363,6 @@ class TailRiskLoss(nn.Module):
         e_buf = buf - u
         e_buf = e_buf[e_buf > 0]
 
-        if cfg.exceedance_cap is not None:
-            e_live = e_live.clamp(max=cfg.exceedance_cap)
-            e_buf = e_buf.clamp(max=cfg.exceedance_cap)
-
         n_pool = n_live + int(e_buf.numel())
         stats["tail/n_live"] = float(n_live)
         stats["tail/n_pool"] = float(n_pool)
@@ -350,9 +388,10 @@ class TailRiskLoss(nn.Module):
                 "tail/q_hat": gpd_return_level(u, fit, cfg.p, cfg.alpha),
             })
 
-        w = self._weights(pool_sorted, fit)
+        w, floored = self._weights(pool_sorted, fit)
         w_sum = float(w.sum())
         stats["tail/w_sum"] = w_sum
+        stats["tail/w_floor_frac"] = floored
         if cfg.normalize == "sum1":
             if w_sum <= 0.0:
                 return zero
@@ -364,7 +403,8 @@ class TailRiskLoss(nn.Module):
             w_live = w_live * (n_pool / n_live)
 
         value = (w * pool_sorted).sum()                      # detached: reported statistic
-        grad_path = (w_live * (e_live - e_live.detach())).sum()  # zero value, carries d/dtheta
+        e_grad = e_live if cfg.exceedance_cap is None else self._cap(e_live)
+        grad_path = (w_live * (e_grad - e_grad.detach())).sum()  # zero value, carries d/dtheta
         loss = self.lam_at() * (value + grad_path)
         stats["tail/loss_unweighted"] = float(value)
         stats["tail/loss"] = float(loss.detach())
